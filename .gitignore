@@ -1,0 +1,18 @@
+# Go
+/bin/
+/vendor/
+*.test
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local data and environment
+*.db
+.env
+
+# Build output
+build/
+dist/

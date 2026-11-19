@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/wgoctopus/state.schema.json",
+  "title": "wgoctopus node desired state",
+  "description": "Complete desired interface and peer state for one node.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revision", "interfaces"],
+  "properties": {
+    "revision": {"type": "integer", "minimum": 0, "description": "Monotonically increasing orchestrator revision."},
+    "interfaces": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/interface"},
+      "description": "Complete desired interface set. Interface names must be unique; JSON Schema cannot enforce uniqueness by a property."
+    }
+  },
+  "$defs": {
+    "key": {"type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$", "description": "Base64-encoded 32-byte key."},
+    "cidr": {"type": "string", "pattern": "^[0-9A-Fa-f:.]+/[0-9]{1,3}$"},
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "listen_port", "private_key", "address", "obfuscation", "peers"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9_=+.-]+$", "description": "Must be unique among interfaces on this node."},
+        "listen_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "private_key": {"$ref": "#/$defs/key"},
+        "address": {"$ref": "#/$defs/cidr"},
+        "mtu": {"type":"integer","minimum":576,"maximum":9000},
+        "egress_interface": {"type":"string","minLength":1,"maxLength":15,"pattern":"^[A-Za-z0-9_=+.-]+$"},
+        "snat_ip": {"type":"string","anyOf":[{"format":"ipv4"},{"format":"ipv6"}]},
+        "obfuscation": {"$ref": "#/$defs/obfuscation"},
+        "peers": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/peer"},
+          "description": "Peer public_key values must be unique; JSON Schema cannot enforce uniqueness by a property."
+        }
+      }
+    },
+    "obfuscation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4"],
+      "properties": {
+        "jc": {"type": "integer", "minimum": 0},
+        "jmin": {"type": "integer", "minimum": 0},
+        "jmax": {"type": "integer", "minimum": 0},
+        "s1": {"type": "integer", "minimum": 0}, "s2": {"type": "integer", "minimum": 0},
+        "s3": {"type": "integer", "minimum": 0}, "s4": {"type": "integer", "minimum": 0},
+        "h1": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"}, "h2": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+        "h3": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"}, "h4": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+        "i1": {"type": "string"}, "i2": {"type": "string"}, "i3": {"type": "string"},
+        "i4": {"type": "string"}, "i5": {"type": "string"}
+      },
+      "description": "Changing any S/H value is dangerous and may break all clients. Validate value semantics against AWG 3.1."
+    },
+    "peer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_key", "allowed_ips"],
+      "properties": {
+        "public_key": {"$ref": "#/$defs/key"},
+        "preshared_key": {"$ref": "#/$defs/key"},
+        "allowed_ips": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/cidr"}}
+      }
+    }
+  }
+}

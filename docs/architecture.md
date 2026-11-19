@@ -1,0 +1,36 @@
+# Architecture
+
+## Components
+
+The agent accepts `--apply-timeout` (default `60s`) to bound how long its management API waits for a state apply; expired requests receive HTTP 504.
+
+- **Orchestrator:** central source of truth for servers, interfaces, peers, and obfuscation parameters. Initially FastAPI with SQLite; PostgreSQL may replace SQLite later. It renders desired state, reconciles it to agents, exposes a REST API for bot/UI clients, and monitors liveness. The initial Telegram bot is a module in this service.
+- **Agent:** one per node, managing N AWG interfaces alongside `amneziawg-go`. It accepts declarative state over an authenticated management API, applies incremental UAPI changes, sets up tunnel addresses and forwarding/NAT rules, persists last applied state, and restarts a failed daemon.
+
+On shutdown, the agent stops managed daemons but leaves its owned iptables rules in place. This avoids unnecessary firewall changes during process shutdown; the next boot idempotently reconciles rules to the persisted desired state.
+- **Management WireGuard:** planned small sidecar establishing management tunnels to nodes and hops. Management connectivity establishes node liveness only, not client-path health.
+- **Hop:** planned statically configured UDP DNAT forwarder. The orchestrator selects a backend; switching requires conntrack cleanup.
+
+## Data flows
+
+1. An operator or bot/UI updates desired configuration through the orchestrator API.
+2. The orchestrator validates and stores it, renders a complete per-node state with a monotonic revision, and pushes it to the node agent.
+3. The agent compares desired state with live device state, applies changes through AWG UAPI without replacing all peers, and reports applied revision/checksum.
+4. Agents expose health and Prometheus metrics. The orchestrator uses management-WireGuard reachability for node liveness. A synthetic peer probed through the hop endpoint is planned to verify the client path.
+
+All nodes of one logical server share the same server keys, peers, and obfuscation settings. Failover therefore requires clients to re-handshake; sessions are not replicated. Active/standby comes first. Active-active with hop selection by client source IP using nftables `jhash` is a later option.
+
+## Failure modes
+
+| Failure | Effect | Recovery / limitation |
+| --- | --- | --- |
+| Orchestrator unavailable | Existing data plane continues on last applied state; peer edits and automatic failover stop. | Agent retains persisted state; reconcile when control plane returns. |
+| Agent or AWG daemon exits | That node's interfaces become unavailable. | Agent restarts the daemon; orchestrator detects loss and may later fail over. |
+| Management tunnel unavailable | Node cannot be managed or confirmed live over the management path. | Does not itself prove client traffic is broken; investigate separately. |
+| Hop backend failure | Client traffic through that hop fails. | Probe the client path; later switch backend and flush conntrack. |
+| Orchestrator store lost | Central desired state is lost. | Back up the orchestrator store; node backups are unnecessary. |
+| Obfuscation S/H parameters changed | Existing client compatibility is broken. | Treat as a dangerous change and require explicit acknowledgement. |
+
+## Trust and security
+
+The agent API listens only on the management address and requires bearer-token authentication. Restrict access to the management network; do not expose the API publicly. Keep tokens and private keys out of logs and source control. Management WireGuard is intended to isolate and authenticate control-plane connectivity, not to establish client-path health. Protect and back up the orchestrator store, which contains sensitive desired state.

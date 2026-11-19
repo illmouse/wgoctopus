@@ -1,0 +1,3 @@
+.git
+.secrets
+**/*_test.go
