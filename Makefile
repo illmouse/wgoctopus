@@ -1,7 +1,7 @@
-.PHONY: help schema-check ship agent-image orchestrator-image agent-build agent-test e2e
+.PHONY: help schema-check ship agent-image orchestrator-image agent-build agent-test e2e orch-test orch-lint
 
 help:
-	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e'
+	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e orch-test orch-lint'
 
 e2e:
 	@./scripts/e2e.sh local
@@ -29,3 +29,9 @@ agent-image:
 
 orchestrator-image:
 	@printf '%s\n' 'not implemented yet'
+
+orch-test:
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_orch --cov-fail-under=85 -q'
+
+orch-lint:
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH ruff check src tests migrations'
