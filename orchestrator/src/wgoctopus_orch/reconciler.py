@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,6 +37,7 @@ class NodeStatus:
     consecutive_failures: int = 0
     last_outcome: PushOutcome | None = None
     last_error: str | None = None
+    last_duration_seconds: float | None = None
 
 
 class Reconciler:
@@ -45,7 +47,10 @@ class Reconciler:
         self.clock, self.sleep, self.random_fn = clock, sleep, random_fn
         self.crypto = crypto
         self._status, self._next = {}, {}
+        self._locks: dict[int, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
         self._forced, self._kicks = set(), set()
+        self._outcomes = {}
         self._kick = asyncio.Event()
 
     def kick(self, node_id, force=False):
@@ -78,13 +83,26 @@ class Reconciler:
         return {i: outcome for i, outcome in pairs if outcome is not None}
 
     async def _one(self, ident, allow_dangerous=False):
+        with self._locks_lock:
+            lock = self._locks.setdefault(ident, threading.Lock())
+        while not lock.acquire(blocking=False):
+            await asyncio.sleep(0.001)
+        try:
+            return await self._push_one(ident, allow_dangerous)
+        finally:
+            lock.release()
+
+    async def _push_one(self, ident, allow_dangerous=False):
         previous = self._status.get(ident, NodeStatus())
         started = datetime.now().astimezone()
+        push_started = self.clock()
         try:
             with self.session_factory() as session:
                 node = session.get(Node, ident)
                 if node is None or not node.enabled:
-                    return PushOutcome(PushStatus.SKIPPED_DISABLED)
+                    outcome = PushOutcome(PushStatus.SKIPPED_DISABLED)
+                    self._outcomes[outcome.status.value] = self._outcomes.get(outcome.status.value, 0) + 1
+                    return outcome
                 transport = self.transport_factory(node)
                 outcome = await asyncio.wait_for(
                     push_node(session, ident, transport=transport, allow_dangerous=allow_dangerous,
@@ -96,6 +114,8 @@ class Reconciler:
             outcome = PushOutcome(PushStatus.FAILED, error="reconciliation failed")
             self._event(ident, "reconcile.error", {"error_kind": type(exc).__name__})
 
+        duration = max(0.0, self.clock() - push_started)
+        self._outcomes[outcome.status.value] = self._outcomes.get(outcome.status.value, 0) + 1
         states = {
             PushStatus.OK: NodeState.IN_SYNC, PushStatus.UP_TO_DATE: NodeState.IN_SYNC,
             PushStatus.SKIPPED_DISABLED: NodeState.DISABLED,
@@ -126,9 +146,14 @@ class Reconciler:
                 self._event(ident, "node.in_sync", {})
             failures = 0
         self._status[ident] = NodeStatus(state, started, None, failures, outcome,
-                                         outcome.error if outcome.error in {"unauthorized", "agent unreachable", "agent request timed out", "agent request failed"} else None)
+                                         outcome.error if outcome.error in {"unauthorized", "agent unreachable", "agent request timed out", "agent request failed"} else None,
+                                         duration)
         # Expose monotonic retry deadlines as UTC timestamps only where meaningful.
         return outcome
+
+    def counters(self):
+        """Return in-memory reconcile totals; counters reset on process restart."""
+        return dict(self._outcomes)
 
     def _event(self, ident, kind, data):
         with self.session_factory() as session:

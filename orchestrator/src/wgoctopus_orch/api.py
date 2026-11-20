@@ -17,11 +17,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import service
-from .config import database_url
+from .config import Settings, database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
+from .metrics import render_metrics
 from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer, Placement
 from .reconciler import build_reconciler
+from .renderer import active_placement
 
 log = logging.getLogger(__name__)
 
@@ -191,6 +193,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                       not hmac.compare_digest(authorization[7:], token)):
             raise HTTPException(401, "authentication required", headers={"WWW-Authenticate": "Bearer"})
 
+    @app.get("/metrics", response_class=Response)
+    def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):
+        return Response(render_metrics(s, app.state.reconciler), media_type="text/plain; version=0.0.4; charset=utf-8")
+
     def kick(session, node_ids):
         reconciler_obj = app.state.reconciler
         if reconciler_obj:
@@ -352,7 +358,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         result=[]
         for link in s.scalars(select(HopLink).where(HopLink.hop_id==hop_id)).all():
             instance=s.get(Instance,link.instance_id)
-            active=s.scalar(select(Placement).where(Placement.instance_id==instance.id,Placement.role=="active").order_by(Placement.weight.desc(),Placement.node_id))
+            active=active_placement(s, instance.id)
             backend=s.get(Node,active.node_id) if active else None
             row=dict(instance_id=instance.id,name=instance.name,listen_port=instance.listen_port,
                      active_node_id=active.node_id if active else None,active_node_name=backend.name if backend else None,

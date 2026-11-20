@@ -30,6 +30,7 @@ class Settings:
     reconcile_max_backoff: float = 300
     reconcile_blocked_recheck: float = 300
     reconcile_node_timeout: float = 120
+    metrics_public: bool = False
 
     @classmethod
     def from_env(cls):
@@ -46,4 +47,5 @@ class Settings:
                     int(os.getenv("WGOCTOPUS_RECONCILE_CONCURRENCY", "4")),
                     float(os.getenv("WGOCTOPUS_RECONCILE_MAX_BACKOFF", "300")),
                     float(os.getenv("WGOCTOPUS_RECONCILE_BLOCKED_RECHECK", "300")),
-                    float(os.getenv("WGOCTOPUS_RECONCILE_NODE_TIMEOUT", "120")))
+                    float(os.getenv("WGOCTOPUS_RECONCILE_NODE_TIMEOUT", "120")),
+                   os.getenv("WGOCTOPUS_METRICS_PUBLIC", "false").lower() == "true")

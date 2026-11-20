@@ -163,6 +163,28 @@ async def test_concurrency_limit_and_timeout_do_not_block_other_nodes(session, f
 
 
 @pytest.mark.asyncio
+async def test_concurrent_reconciles_serialize_pushes_for_same_node(session, crypto, monkeypatch):
+    from wgoctopus_orch import reconciler as module
+
+    create_node(session, "serialized", "127.0.0.1", "test", crypto=crypto)
+    settings = Settings(transport="direct")
+    active = maximum = 0
+
+    async def push(*args, **kwargs):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return PushOutcome(PushStatus.UP_TO_DATE)
+
+    monkeypatch.setattr(module, "push_node", push)
+    rec = Reconciler(sessions(session), lambda _: None, settings, crypto=crypto)
+    await asyncio.gather(rec.reconcile_once(), rec.reconcile_once())
+    assert maximum == 1
+
+
+@pytest.mark.asyncio
 async def test_push_exception_is_contained_and_logs_no_secrets(session, fake_agent_factory, crypto, monkeypatch, caplog):
     from wgoctopus_orch import reconciler as module
 

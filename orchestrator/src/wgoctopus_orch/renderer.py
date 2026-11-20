@@ -11,6 +11,12 @@ from .crypto import Crypto
 from .models import HopLink, Instance, Node, NodeRevision, Peer, Placement
 
 
+def active_placement(session: Session, instance_id: int):
+    return session.scalars(select(Placement).where(
+        Placement.instance_id == instance_id, Placement.role == "active"
+    ).order_by(Placement.weight.desc(), Placement.node_id)).first()
+
+
 def render_node_state(session: Session, node_id: int, crypto: Crypto | None = None) -> dict:
     crypto = crypto or Crypto()
     node = session.get(Node, node_id)
@@ -21,9 +27,7 @@ def render_node_state(session: Session, node_id: int, crypto: Crypto | None = No
         routes = []
         links = session.scalars(select(HopLink).where(HopLink.hop_id == node_id)).all()
         for link in links:
-            active = session.scalars(select(Placement).where(
-                Placement.instance_id == link.instance_id, Placement.role == "active"
-            ).order_by(Placement.weight.desc(), Placement.node_id)).first()
+            active = active_placement(session, link.instance_id)
             if active is None:
                 continue
             backend = session.get(Node, active.node_id)

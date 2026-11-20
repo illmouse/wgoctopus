@@ -47,3 +47,6 @@ The push control plane uses an outbound SSH connection from the orchestrator to 
 ## API and lifecycle
 
 The HTTP API exposes the synchronous service layer at `/v1`. FastAPI owns a SQLAlchemy session per request and commits only after successful completion. Startup optionally migrates the database, then starts the in-process reconciler when enabled; shutdown signals and awaits its task. Run one Uvicorn worker only. Mutations kick affected nodes. A bearer token is required unless development-only no-auth mode is explicitly enabled; `/healthz` and `/readyz` are public. Readiness checks database access and encryption. The peer-config endpoint is the sole API response containing client secrets; OpenAPI is disabled by default.
+# Monitoring environment
+
+`WGOCTOPUS_METRICS_PUBLIC` defaults to `false`; set it to `true` to disable bearer authentication on `/metrics` only. Restrict public metrics at the network boundary.

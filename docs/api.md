@@ -14,6 +14,22 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | POST `/v1/nodes/{id}/reconcile`; POST `/v1/nodes/{id}/apply-dangerous` | Trigger reconcile (202) or confirm dangerous apply |
 | GET `/v1/events`; GET `/v1/status` | Event history (limit/kind/subject filters) and aggregate status |
 | GET `/healthz`; GET `/readyz` | Public liveness and readiness probes |
+| GET `/metrics` | Prometheus text exposition (0.0.4) |
+
+### Monitoring
+
+`GET /metrics` returns `text/plain; version=0.0.4; charset=utf-8`. It requires the same bearer administrator token as `/v1`; set `WGOCTOPUS_METRICS_PUBLIC=true` only when access is restricted by the network. The exposition contains no agent credentials, keys, PSKs, SSH details, or node addresses. Reconcile outcome counters are in memory and reset on process restart.
+
+| Metric | Meaning / labels |
+|---|---|
+| `wgoctopus_build_info` | Build version (`version`) |
+| `wgoctopus_nodes`, `wgoctopus_instances`, `wgoctopus_peers`, `wgoctopus_peers_enabled` | Configuration counts (`kind`, `instance`) |
+| `wgoctopus_node_state`, `wgoctopus_node_enabled`, `wgoctopus_node_consecutive_failures` | Node reconciler state (one-hot), enabled flag, and failures (`node`, `kind`, `state`) |
+| `wgoctopus_node_desired_revision`, `wgoctopus_node_applied_revision`, `wgoctopus_node_last_seen_timestamp_seconds` | Node desired/observed revisions and observation time (`node`) |
+| `wgoctopus_instance_active_node` | Active placement (`instance`, `node`) |
+| `wgoctopus_hop_route` | Resolved hop route (`hop`, `instance`, `backend_ip`, `port`) |
+| `wgoctopus_events_total` | Persisted event counts (`kind`) |
+| `wgoctopus_reconcile_outcomes_total`, `wgoctopus_reconcile_last_duration_seconds` | Process-lifetime outcomes and most recent push duration (`outcome` / `node`) |
 
 Credentials, private keys, and PSKs are never returned except in the peer config endpoint (text/plain, `Cache-Control: no-store`). Agent tokens are write-only. Errors use `{"error":"...","detail":"..."}`; 404 means unknown id, 409 conflict, 422 invalid input, and readiness returns 503 when the database or encryption key is unavailable. Obfuscation, listen port, address and server keys cannot be changed through PATCH. OpenAPI and Swagger are disabled unless `WGOCTOPUS_API_DOCS=true`.
 
