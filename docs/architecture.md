@@ -15,6 +15,8 @@ On shutdown, the agent stops managed daemons but leaves its owned iptables rules
 
 **Implemented.** The agent-owned nat chains are `WGOCT_HOP_DNAT` and `WGOCT_HOP_SNAT`; the filter chain is `WGOCT_HOP_FWD`. Rules are tagged `wgoct:hop:<listen_port>`. Backend switch rewrites the DNAT rule and flushes conntrack entries for that listen port. Hop support is opt-in with `--hop-enabled`. IPv4 forwarding must already be enabled and the hop IP assigned to its WAN interface; the agent does not modify either. Changing `backend_ip` is normal failover and is not dangerous.
 
+Hop nodes use the same orchestrator push/reconcile path and `/v1/state` agent contract as AWG nodes, with empty `interfaces` and a `hop` section. Start their agent with `--hop-enabled`.
+
 ## Data flows
 
 1. An operator or bot/UI updates desired configuration through the orchestrator API.

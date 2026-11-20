@@ -6,7 +6,9 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 |---|---|
 | POST/GET `/v1/instances`; GET/PATCH/DELETE `/v1/instances/{id}` | Instance lifecycle; patch allows mtu, egress_interface, snat_ip only |
 | PUT/DELETE `/v1/instances/{id}/placements/{node_id}` | Placement |
+| POST `/v1/instances/{id}/switch` | Switch active placement (`{"node_id":...}`) |
 | POST/GET `/v1/nodes`; GET/PATCH/DELETE `/v1/nodes/{id}` | Node lifecycle |
+| GET `/v1/hops/{hop_id}/links`; PUT/DELETE `/v1/hops/{hop_id}/links/{instance_id}` | Hop routes, linked instance lifecycle |
 | POST/GET `/v1/instances/{id}/peers`; GET/PATCH/DELETE `/v1/peers/{id}` | Peer lifecycle; list supports owner, enabled, limit, and offset |
 | GET `/v1/peers/{id}/config` | Secret-bearing client configuration; requires endpoint_host or `WGOCTOPUS_CLIENT_ENDPOINT_HOST` |
 | POST `/v1/nodes/{id}/reconcile`; POST `/v1/nodes/{id}/apply-dangerous` | Trigger reconcile (202) or confirm dangerous apply |
@@ -14,6 +16,8 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | GET `/healthz`; GET `/readyz` | Public liveness and readiness probes |
 
 Credentials, private keys, and PSKs are never returned except in the peer config endpoint (text/plain, `Cache-Control: no-store`). Agent tokens are write-only. Errors use `{"error":"...","detail":"..."}`; 404 means unknown id, 409 conflict, 422 invalid input, and readiness returns 503 when the database or encryption key is unavailable. Obfuscation, listen port, address and server keys cannot be changed through PATCH. OpenAPI and Swagger are disabled unless `WGOCTOPUS_API_DOCS=true`.
+
+Node responses expose `kind` (`awg` or `hop`), `wan_interface`, `hop_ip`, and `backend_ip`; hop creation requires its WAN interface and hop IPv4 address. AWG nodes cannot set hop-only fields. `backend_ip` is the IPv4 address used by hop routes. Instance responses include placement roles and `active_node_id`. Hop-link listings report active backend resolution and a `reason` when a route is omitted. Switch and hop-link mutations kick reconciliation; switch returns `from_node_id`, `to_node_id`, and `changed`.
 
 ```sh
 curl -H 'Authorization: Bearer <token>' https://example.invalid/v1/instances

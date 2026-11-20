@@ -1,15 +1,17 @@
 """HTTP API for the orchestrator service."""
 # ruff: noqa: B008, C408, BLE001
 import hmac
+import ipaddress
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -77,6 +79,21 @@ class NodeIn(Strict):
     hop_ip: str | None = None
     backend_ip: str | None = None
 
+    @field_validator("hop_ip", "backend_ip")
+    @classmethod
+    def ipv4(cls, value):
+        if value is not None and ipaddress.ip_address(value).version != 4:
+            raise ValueError("must be an IPv4 address")
+        return value
+
+    @model_validator(mode="after")
+    def valid_kind_fields(self):
+        if self.kind == "hop" and (not self.wan_interface or not self.hop_ip):
+            raise ValueError("hop nodes require wan_interface and hop_ip")
+        if self.kind == "awg" and (self.wan_interface is not None or self.hop_ip is not None):
+            raise ValueError("awg nodes cannot set wan_interface or hop_ip")
+        return self
+
 
 class PeerIn(Strict):
     name: str
@@ -104,6 +121,17 @@ class NodePatch(Strict):
     wan_interface: str | None = None
     hop_ip: str | None = None
     backend_ip: str | None = None
+
+    @field_validator("hop_ip", "backend_ip")
+    @classmethod
+    def ipv4(cls, value):
+        if value is not None and ipaddress.ip_address(value).version != 4:
+            raise ValueError("must be an IPv4 address")
+        return value
+
+
+class SwitchIn(Strict):
+    node_id: int
 
 
 def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None):
@@ -177,7 +205,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         placements = session.scalars(select(Placement).where(Placement.instance_id == i.id)).all()
         return dict(id=i.id, name=i.name, listen_port=i.listen_port, address=i.address, public_key=i.public_key,
                     obfuscation=i.obfuscation, mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
-                    placements=[dict(node_id=p.node_id, role=p.role, weight=p.weight) for p in placements], peer_count=peers,
+                     placements=[dict(node_id=p.node_id, role=p.role, weight=p.weight) for p in placements],
+                     active_node_id=next((p.node_id for p in placements if p.role == "active"), None), peer_count=peers,
                     created_at=i.created_at)
 
     def node(n, session):
@@ -185,7 +214,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         status=(app.state.reconciler.status().get(n.id) if app.state.reconciler else None)
         return dict(id=n.id,name=n.name,ssh_host=n.ssh_host,ssh_port=n.ssh_port,ssh_user=n.ssh_user,
                     mgmt_mode=n.mgmt_mode,agent_port=n.agent_port,egress_interface=n.egress_interface,snat_ip=n.snat_ip,
-                    enabled=n.enabled,desired_revision=rev.desired_revision if rev else None,
+                    enabled=n.enabled,kind=n.kind,wan_interface=n.wan_interface,hop_ip=n.hop_ip,backend_ip=n.backend_ip,
+                    desired_revision=rev.desired_revision if rev else None,
                     observed=dict(last_seen_at=obs.last_seen_at,applied_revision=obs.applied_revision,healthy=obs.healthy,last_error=obs.last_error) if obs else None,
                     reconciler=dict(state=status.state.value,last_attempt_at=status.last_attempt_at,next_attempt_at=status.next_attempt_at,
                                     consecutive_failures=status.consecutive_failures,last_outcome=status.last_outcome.status.value) if status else None)
@@ -196,8 +226,11 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.exception_handler(ValueError)
     async def value_error(_, exc):
-        return JSONResponse(status_code=404 if str(exc).startswith("unknown ") else 422,
-                            content={"error":"not_found" if str(exc).startswith("unknown ") else "validation_error","detail":str(exc)})
+        detail = str(exc)
+        unknown = detail.startswith("unknown ")
+        conflict = "no placement" in detail
+        return JSONResponse(status_code=404 if unknown else 409 if conflict else 422,
+                            content={"error":"not_found" if unknown else "conflict" if conflict else "validation_error","detail":detail})
 
     @app.exception_handler(HTTPException)
     async def http_error(_, exc):
@@ -206,7 +239,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(_: Request, exc: RequestValidationError):
-        return JSONResponse(status_code=422, content={"error":"validation_error","detail":exc.errors()})
+        return JSONResponse(status_code=422, content={"error":"validation_error","detail":jsonable_encoder(exc.errors())})
 
     @app.exception_handler(IntegrityError)
     async def integrity_error(_, exc):
@@ -275,7 +308,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.post("/v1/nodes",dependencies=[Depends(auth)],status_code=201)
     def create_node(body:NodeIn,s:Session=Depends(db)):
-        n=service.create_node(s,body.name,body.ssh_host,body.ssh_user,ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,crypto=cipher)
+        n=service.create_node(s,body.name,body.ssh_host,body.ssh_user,ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,crypto=cipher)
         return node(n,s)
 
     @app.get("/v1/nodes",dependencies=[Depends(auth)])
@@ -292,17 +325,72 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         n=s.get(Node,ident)
         if not n: raise HTTPException(404,"unknown node")
         body=body.model_dump(exclude_unset=True)
+        proposed = {"kind": n.kind, "wan_interface": n.wan_interface, "hop_ip": n.hop_ip, **body}
+        if proposed["kind"] == "hop" and (not proposed["wan_interface"] or not proposed["hop_ip"]):
+            raise HTTPException(422, "hop nodes require wan_interface and hop_ip")
+        if proposed["kind"] == "awg" and (proposed["wan_interface"] is not None or proposed["hop_ip"] is not None):
+            raise HTTPException(422, "awg nodes cannot set wan_interface or hop_ip")
         for k,v in body.items():
             if k == "agent_token":
                 n.agent_token_enc = cipher.encrypt(v)
             else:
                 setattr(n, k, v)
+        hop_ids = []
         if body:
             service.bump_revision(s,ident,cipher)
-            if any(k in body for k in ("kind", "wan_interface", "hop_ip", "backend_ip")):
-                for hop_id in s.scalars(select(HopLink.hop_id).where(HopLink.hop_id == ident)).all():
+            if "backend_ip" in body:
+                hop_ids = s.scalars(select(HopLink.hop_id).join(Placement, Placement.instance_id == HopLink.instance_id)
+                                    .where(Placement.node_id == ident)).all()
+                for hop_id in hop_ids:
                     service.bump_revision(s,hop_id,cipher)
-        kick(s,[ident]); return node(n,s)
+        kick(s,[ident, *hop_ids]); return node(n,s)
+
+    @app.get("/v1/hops/{hop_id}/links", dependencies=[Depends(auth)])
+    def list_hop_links(hop_id: int, s: Session=Depends(db)):
+        hop=s.get(Node,hop_id)
+        if not hop or hop.kind != "hop": raise HTTPException(404,"unknown hop")
+        result=[]
+        for link in s.scalars(select(HopLink).where(HopLink.hop_id==hop_id)).all():
+            instance=s.get(Instance,link.instance_id)
+            active=s.scalar(select(Placement).where(Placement.instance_id==instance.id,Placement.role=="active").order_by(Placement.weight.desc(),Placement.node_id))
+            backend=s.get(Node,active.node_id) if active else None
+            row=dict(instance_id=instance.id,name=instance.name,listen_port=instance.listen_port,
+                     active_node_id=active.node_id if active else None,active_node_name=backend.name if backend else None,
+                     backend_ip=backend.backend_ip if backend and backend.backend_ip else None)
+            if not active: row["reason"]="no_active_placement"
+            elif not backend.backend_ip: row["reason"]="backend_ip_missing"
+            result.append(row)
+        return result
+
+    @app.put("/v1/hops/{hop_id}/links/{instance_id}",dependencies=[Depends(auth)],status_code=204)
+    def put_hop_link(hop_id:int,instance_id:int,s:Session=Depends(db)):
+        hop,instance=s.get(Node,hop_id),s.get(Instance,instance_id)
+        if not hop or hop.kind!="hop": raise HTTPException(404,"unknown hop")
+        if not instance: raise HTTPException(404,"unknown instance")
+        if not s.scalar(select(HopLink).where(HopLink.hop_id==hop_id,HopLink.instance_id==instance_id)):
+            service.create_hop_link(s,hop_id,instance_id,cipher)
+        kick(s,[hop_id]); return Response(status_code=204)
+
+    @app.delete("/v1/hops/{hop_id}/links/{instance_id}",dependencies=[Depends(auth)],status_code=204)
+    def delete_hop_link(hop_id:int,instance_id:int,s:Session=Depends(db)):
+        hop=s.get(Node,hop_id)
+        if not hop or hop.kind!="hop": raise HTTPException(404,"unknown hop")
+        if not s.get(Instance,instance_id): raise HTTPException(404,"unknown instance")
+        if not service.delete_hop_link(s,hop_id,instance_id,cipher): raise HTTPException(404,"unknown hop link")
+        kick(s,[hop_id]); return Response(status_code=204)
+
+    @app.post("/v1/instances/{ident}/switch",dependencies=[Depends(auth)])
+    def switch_instance(ident:int,body:SwitchIn,s:Session=Depends(db)):
+        if not s.get(Instance,ident): raise HTTPException(404,"unknown instance")
+        old=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.role=="active").order_by(Placement.weight.desc(),Placement.node_id))
+        target=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.node_id==body.node_id))
+        if not target: raise HTTPException(409,"node has no placement for instance")
+        old_id=old.node_id if old else None
+        service.switch_active(s,ident,body.node_id,cipher)
+        placements=s.scalars(select(Placement).where(Placement.instance_id==ident)).all()
+        hops=s.scalars(select(HopLink.hop_id).where(HopLink.instance_id==ident)).all()
+        kick(s,[p.node_id for p in placements]+hops)
+        return dict(instance_id=ident,from_node_id=old_id,to_node_id=body.node_id,changed=old_id!=body.node_id)
 
     @app.delete("/v1/nodes/{ident}",dependencies=[Depends(auth)],status_code=204)
     def delete_node(ident:int,s:Session=Depends(db)):
