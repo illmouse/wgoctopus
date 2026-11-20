@@ -25,6 +25,11 @@ class Settings:
     ssh_tofu: bool = False
     ssh_connect_timeout: float = 15
     agent_request_timeout: float = 30
+    reconcile_interval: float = 30
+    reconcile_concurrency: int = 4
+    reconcile_max_backoff: float = 300
+    reconcile_blocked_recheck: float = 300
+    reconcile_node_timeout: float = 120
 
     @classmethod
     def from_env(cls):
@@ -36,4 +41,9 @@ class Settings:
                    os.getenv("WGOCTOPUS_SSH_KNOWN_HOSTS"),
                    os.getenv("WGOCTOPUS_SSH_TOFU", "false").lower() == "true",
                    float(os.getenv("WGOCTOPUS_SSH_CONNECT_TIMEOUT", "15")),
-                   float(os.getenv("WGOCTOPUS_AGENT_REQUEST_TIMEOUT", "30")))
+                    float(os.getenv("WGOCTOPUS_AGENT_REQUEST_TIMEOUT", "30")),
+                    float(os.getenv("WGOCTOPUS_RECONCILE_INTERVAL", "30")),
+                    int(os.getenv("WGOCTOPUS_RECONCILE_CONCURRENCY", "4")),
+                    float(os.getenv("WGOCTOPUS_RECONCILE_MAX_BACKOFF", "300")),
+                    float(os.getenv("WGOCTOPUS_RECONCILE_BLOCKED_RECHECK", "300")),
+                    float(os.getenv("WGOCTOPUS_RECONCILE_NODE_TIMEOUT", "120")))

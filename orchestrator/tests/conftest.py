@@ -1,12 +1,32 @@
 import os
 
 import pytest
+import pytest_asyncio
 from cryptography.fernet import Fernet
+from fake_agent import FakeAgent
 
 from wgoctopus_orch.crypto import Crypto
 from wgoctopus_orch.db import make_engine, make_session_factory, upgrade_to_head
 
 os.environ.setdefault("USER", "tester")
+
+
+@pytest_asyncio.fixture
+async def fake_agent_factory():
+    agents = []
+
+    async def create(count=1, *, delay=0):
+        started = []
+        for _ in range(count):
+            agent = FakeAgent(delay=delay)
+            await agent.start()
+            agents.append(agent)
+            started.append(agent)
+        return started
+
+    yield create
+    for agent in agents:
+        await agent.stop()
 
 
 @pytest.fixture

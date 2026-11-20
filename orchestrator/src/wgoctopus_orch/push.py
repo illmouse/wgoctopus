@@ -7,7 +7,7 @@ import httpx
 
 from .agent_client import AgentClient, ErrorKind
 from .crypto import Crypto
-from .models import Event, Node, NodeObserved, NodeRevision, now_utc
+from .models import Event, Node, NodeObserved, now_utc
 from .renderer import render_node_state
 
 
@@ -38,14 +38,12 @@ async def push_node(session, node_id, *, transport, allow_dangerous=False, crypt
     if not node.enabled:
         return PushOutcome(PushStatus.SKIPPED_DISABLED)
     desired = render_node_state(session, node_id, crypto)
-    revision = session.get(NodeRevision, node_id)
     desired_revision = desired["revision"]
-    desired_checksum = revision.desired_checksum if revision else None
     observed = session.get(NodeObserved, node_id)
     async with transport.open(node) as connection:
         client = AgentClient(connection)
         try:
-            remote_revision, _remote_checksum, _ = await client.get_state()
+            remote_revision, remote_checksum, _ = await client.get_state()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 401:
                 outcome = PushOutcome(PushStatus.UNAUTHORIZED, desired_revision, error="unauthorized")
@@ -61,8 +59,14 @@ async def push_node(session, node_id, *, transport, allow_dangerous=False, crypt
             return outcome
         if remote_revision > desired_revision:
             return PushOutcome(PushStatus.REVISION_AHEAD, desired_revision)
-        if remote_revision == desired_revision and observed and observed.applied_revision >= desired_revision and observed.applied_checksum == desired_checksum:
-            return PushOutcome(PushStatus.UP_TO_DATE, desired_revision)
+        if remote_revision == desired_revision and observed and observed.applied_revision == desired_revision:
+            if remote_checksum == observed.applied_checksum:
+                return PushOutcome(PushStatus.UP_TO_DATE, desired_revision)
+            # Agent checksums are authoritative and may not be reproducible by
+            # the orchestrator. Same-revision drift cannot safely be PUT again:
+            # agents reject it as stale, so report it rather than auto-correct.
+            _record(session, node, observed, "node.drift", {"revision": desired_revision})
+            return PushOutcome(PushStatus.UP_TO_DATE, desired_revision, error="remote state drift")
         result = await client.put_state(desired, allow_dangerous=allow_dangerous)
         if result.ok:
             try:

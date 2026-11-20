@@ -30,5 +30,10 @@ Push delivery defaults to an SSH local-forward tunnel from the orchestrator to t
 | `WGOCTOPUS_SSH_TOFU` | `false` | On first use, record the presented key atomically (0600 file); strictly verify every later use and reject changed keys. First-use interception risk remains. |
 | `WGOCTOPUS_SSH_CONNECT_TIMEOUT` | `15` | SSH connection timeout, seconds |
 | `WGOCTOPUS_AGENT_REQUEST_TIMEOUT` | `30` | Agent HTTP request timeout, seconds; apply uses 75 seconds |
+| `WGOCTOPUS_RECONCILE_INTERVAL` | `30` | Reconciliation interval, seconds |
+| `WGOCTOPUS_RECONCILE_CONCURRENCY` | `4` | Maximum concurrent node reconciliations |
+| `WGOCTOPUS_RECONCILE_MAX_BACKOFF` | `300` | Maximum unreachable-node retry backoff, seconds |
+| `WGOCTOPUS_RECONCILE_BLOCKED_RECHECK` | `300` | Retry delay for blocked node states, seconds |
+| `WGOCTOPUS_RECONCILE_NODE_TIMEOUT` | `120` | Per-node reconciliation timeout, seconds |
 
 The agent requires `allow_dangerous=true` as a query parameter on `PUT /v1/state`; it is never part of the state JSON. Push attempts are not retried. Revision is the synchronization key; a remote-ahead revision is reported without overwriting.

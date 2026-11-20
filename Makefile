@@ -31,7 +31,7 @@ orchestrator-image:
 	@printf '%s\n' 'not implemented yet'
 
 orch-test:
-	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_orch --cov-fail-under=85 -q'
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_orch --cov-report=term-missing --cov-fail-under=85 -q'
 
 orch-lint:
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH ruff check src tests migrations'

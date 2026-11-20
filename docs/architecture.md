@@ -20,6 +20,10 @@ On shutdown, the agent stops managed daemons but leaves its owned iptables rules
 
 All nodes of one logical server share the same server keys, peers, and obfuscation settings. Failover therefore requires clients to re-handshake; sessions are not replicated. Active/standby comes first. Active-active with hop selection by client source IP using nftables `jhash` is a later option.
 
+## Reconciliation
+
+The orchestrator periodically compares rendered desired state with each enabled agent and pushes revisions that are not applied. Unreachable nodes use exponential backoff starting at 5 seconds and capped at 300 seconds, with ±20% jitter. Dangerous changes require an explicit `apply_dangerous` action; revision-ahead, invalid, unauthorized, and dangerous responses are blocked and rechecked after 300 seconds. Events such as unreachable, recovered, and blocked are emitted only on state transitions. If the agent's checksum changes without a revision change, the orchestrator reports `node.drift` and does not auto-fix it. Reconciliation status and retry deadlines are memory-only and are lost on restart.
+
 ## Failure modes
 
 | Failure | Effect | Recovery / limitation |
