@@ -36,6 +36,8 @@ make e2e-hop HOST=root@test-host
 
 The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictHostKeyChecking=accept-new` by default; set `SSH_OPTS` to override.
 
+`make e2e-orch-hop HOST=root@<test-host>` exercises the orchestrator driving a real hop agent over SSH, including backend switching, conntrack cleanup, restart persistence, and cleanup checks. The script ships the agent image unless `E2E_SKIP_SHIP=1` and removes only uniquely named resources; use only a dedicated disposable host.
+
 ## Manual image delivery
 
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:
