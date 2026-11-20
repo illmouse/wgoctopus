@@ -1,8 +1,12 @@
+import os
+
 import pytest
 from cryptography.fernet import Fernet
 
 from wgoctopus_orch.crypto import Crypto
 from wgoctopus_orch.db import make_engine, make_session_factory, upgrade_to_head
+
+os.environ.setdefault("USER", "tester")
 
 
 @pytest.fixture

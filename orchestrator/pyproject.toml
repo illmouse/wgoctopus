@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "wgoctopus-orch"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["sqlalchemy>=2", "alembic", "cryptography", "jsonschema"]
+dependencies = ["sqlalchemy>=2", "alembic", "cryptography", "jsonschema", "asyncssh", "httpx"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff"]
+dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
