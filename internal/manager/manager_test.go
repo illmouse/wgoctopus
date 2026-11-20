@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/illmouse/wgoctopus/internal/hop"
 	"github.com/illmouse/wgoctopus/internal/netsetup"
 	"github.com/illmouse/wgoctopus/internal/reconcile"
 	"github.com/illmouse/wgoctopus/internal/state"
@@ -407,6 +408,101 @@ func TestValidationAndSaveFailures(t *testing.T) {
 	if m.AppliedRevision() != 0 {
 		t.Fatal("failed save recorded applied state")
 	}
+}
+
+type fakeHop struct {
+	calls  int
+	values []*state.Hop
+	err    error
+	log    *[]string
+}
+
+func (f *fakeHop) Apply(_ context.Context, h *state.Hop) (hop.Result, error) {
+	f.calls++
+	f.values = append(f.values, h)
+	if f.log != nil {
+		*f.log = append(*f.log, "hop")
+	}
+	return hop.Result{Warnings: []string{"warn"}}, f.err
+}
+
+func (f *fakeHop) Stats() hop.Stats { return hop.Stats{Routes: int64(len(f.values))} }
+
+func TestHopApplyFlow(t *testing.T) {
+	t.Run("after interfaces and no dangerous approval", func(t *testing.T) {
+		m, log, _, _ := setup()
+		h := &fakeHop{log: log}
+		m.Hop = h
+		v := makeState("wg0")
+		v.Hop = &state.Hop{WANInterface: "eth0", HopIP: "192.0.2.1"}
+		if err := m.Apply(v, false); err != nil {
+			t.Fatal(err)
+		}
+		if (*log)[len(*log)-2] != "hop" || h.calls != 1 {
+			t.Fatalf("order/calls: %v %d", *log, h.calls)
+		}
+		if got := m.Warnings(); len(got) != 1 || got[0] != "warn" || m.HopStats().Routes != 1 {
+			t.Fatalf("warnings=%v stats=%+v", got, m.HopStats())
+		}
+	})
+	t.Run("nil never and after use", func(t *testing.T) {
+		m, _, _, _ := setup()
+		h := &fakeHop{}
+		m.Hop = h
+		if err := m.Apply(makeState(), true); err != nil || h.calls != 0 {
+			t.Fatalf("calls=%d err=%v", h.calls, err)
+		}
+		v := makeState()
+		v.Hop = &state.Hop{WANInterface: "eth0", HopIP: "192.0.2.1"}
+		if err := m.Apply(v, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Apply(makeState(), true); err != nil || h.calls != 2 || h.values[1] != nil {
+			t.Fatalf("calls=%d err=%v", h.calls, err)
+		}
+	})
+	t.Run("error joined and unsaved", func(t *testing.T) {
+		m, _, s, _ := setup()
+		failure := errors.New("hop failed")
+		m.Hop = &fakeHop{err: failure}
+		interfaceFailure := errors.New("interface failed")
+		m.Links = testLink{ensureErr: map[string]error{"wg0": interfaceFailure}}
+		v := makeState("wg0")
+		v.Hop = &state.Hop{WANInterface: "eth0", HopIP: "192.0.2.1"}
+		err := m.Apply(v, false)
+		if !errors.Is(err, failure) || !errors.Is(err, interfaceFailure) || s.saves != 0 {
+			t.Fatalf("err=%v saves=%d", err, s.saves)
+		}
+	})
+	t.Run("backend change reaches applier", func(t *testing.T) {
+		m, _, _, _ := setup()
+		h := &fakeHop{}
+		m.Hop = h
+		v := makeState()
+		v.Hop = &state.Hop{WANInterface: "eth0", HopIP: "192.0.2.1", Routes: []state.HopRoute{{ListenPort: 1000, BackendIP: "198.51.100.1", BackendPort: 1001}}}
+		if err := m.Apply(v, false); err != nil {
+			t.Fatal(err)
+		}
+		v.Revision++
+		v.Hop.Routes[0].BackendIP = "198.51.100.2"
+		if err := m.Apply(v, false); err != nil {
+			t.Fatal(err)
+		}
+		if h.calls != 2 || h.values[1].Routes[0].BackendIP != "198.51.100.2" {
+			t.Fatalf("applied %#v", h.values)
+		}
+	})
+	t.Run("boot reapplies", func(t *testing.T) {
+		m, _, s, _ := setup()
+		v := makeState()
+		v.Hop = &state.Hop{WANInterface: "eth0", HopIP: "192.0.2.1"}
+		s.value, s.found = v, true
+		h := &fakeHop{}
+		m.Hop = h
+		if err := m.Boot(context.Background(), time.Millisecond); err != nil || h.calls != 1 {
+			t.Fatalf("calls=%d err=%v", h.calls, err)
+		}
+	})
 }
 
 func TestBootLoadErrorAndCanceledContext(t *testing.T) {

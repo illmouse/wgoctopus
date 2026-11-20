@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/wgoctopus/state.schema.json",
   "title": "wgoctopus node desired state",
-  "description": "Complete desired interface and peer state for one node.",
+  "description": "Complete desired interface, peer, and optional hop state for one node.",
   "type": "object",
   "additionalProperties": false,
   "required": ["revision", "interfaces"],
@@ -12,9 +12,29 @@
       "type": "array",
       "items": {"$ref": "#/$defs/interface"},
       "description": "Complete desired interface set. Interface names must be unique; JSON Schema cannot enforce uniqueness by a property."
-    }
+    },
+    "hop": {"$ref": "#/$defs/hop"}
   },
   "$defs": {
+    "hop": {
+      "type": "object", "additionalProperties": false,
+      "required": ["wan_interface", "hop_ip", "routes"],
+      "properties": {
+        "wan_interface": {"type":"string","minLength":1,"maxLength":15,"pattern":"^[A-Za-z0-9_=+.-]+$"},
+        "hop_ip": {"type":"string","format":"ipv4","not":{"enum":["0.0.0.0","127.0.0.1"]}},
+        "routes": {"type":"array","maxItems":256,"items":{"$ref":"#/$defs/hopRoute"}}
+      }
+    },
+    "hopRoute": {
+      "type":"object", "additionalProperties":false,
+      "required":["listen_port","backend_ip","backend_port"],
+      "properties": {
+        "listen_port":{"type":"integer","minimum":1,"maximum":65535},
+        "backend_ip":{"type":"string","format":"ipv4","not":{"enum":["0.0.0.0","127.0.0.1"]}},
+        "backend_port":{"type":"integer","minimum":1,"maximum":65535},
+        "name":{"type":"string","minLength":1,"maxLength":15,"pattern":"^[A-Za-z0-9_=+.-]+$"}
+      }
+    },
     "key": {"type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$", "description": "Base64-encoded 32-byte key."},
     "cidr": {"type": "string", "pattern": "^[0-9A-Fa-f:.]+/[0-9]{1,3}$"},
     "interface": {

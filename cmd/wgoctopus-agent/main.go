@@ -17,6 +17,7 @@ import (
 
 	"github.com/illmouse/wgoctopus/internal/api"
 	"github.com/illmouse/wgoctopus/internal/daemon"
+	"github.com/illmouse/wgoctopus/internal/hop"
 	"github.com/illmouse/wgoctopus/internal/manager"
 	"github.com/illmouse/wgoctopus/internal/netsetup"
 	"github.com/illmouse/wgoctopus/internal/store"
@@ -30,11 +31,11 @@ func (secret) String() string       { return "[redacted]" }
 func (secret) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 type config struct {
-	Listen                                              string
-	Token                                               secret
-	StateDir, DaemonBin, SockDir, IPTablesBin, LogLevel string
-	MetricsPublic, AllowPublicListen, ShowVersion       bool
-	ApplyTimeout                                        time.Duration
+	Listen                                                    string
+	Token                                                     secret
+	StateDir, DaemonBin, SockDir, IPTablesBin, LogLevel       string
+	MetricsPublic, AllowPublicListen, ShowVersion, HopEnabled bool
+	ApplyTimeout                                              time.Duration
 }
 
 func parseConfig(args []string, getenv func(string) string) (config, error) {
@@ -48,6 +49,7 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	fs.StringVar(&c.DaemonBin, "daemon-bin", "amneziawg-go", "AWG daemon executable")
 	fs.StringVar(&c.SockDir, "sock-dir", "/var/run/amneziawg", "AWG UAPI socket directory")
 	fs.StringVar(&c.IPTablesBin, "iptables-bin", "iptables", "iptables executable")
+	fs.BoolVar(&c.HopEnabled, "hop-enabled", strings.EqualFold(getenv("WGOCTOPUS_HOP_ENABLED"), "true"), "enable hop forwarding mode")
 	fs.BoolVar(&c.MetricsPublic, "metrics-public", false, "allow unauthenticated metrics")
 	fs.BoolVar(&c.AllowPublicListen, "allow-public-listen", false, "allow listening on all interfaces")
 	fs.StringVar(&c.LogLevel, "log-level", "info", "debug, info, warn, or error")
@@ -123,10 +125,16 @@ func run(ctx context.Context, cfg config) error {
 	link := netsetup.Netlink{}
 	fw := netsetup.IPTables{Path: cfg.IPTablesBin, DefaultEgress: link.DefaultRouteInterface}
 	mgr := &manager.Manager{Daemons: sup, Links: link, Firewall: fw, Store: manager.FileStore{Store: store.Store{Dir: cfg.StateDir}}, SocketDir: cfg.SockDir}
+	if cfg.HopEnabled {
+		mgr.Hop = hop.New(hop.Deps{Path: cfg.IPTablesBin, Conntrack: hop.NetlinkConntrack{}})
+	}
 	mgr.RegisterRestartHandler()
 	collector := mgr.Collector()
 	collector.Version = version
-	srv := &api.Server{Token: string(cfg.Token), AllowMetrics: cfg.MetricsPublic, Applier: mgr, Collector: collector, ApplyTimeout: cfg.ApplyTimeout}
+	if cfg.HopEnabled {
+		collector.HopStats = mgr.HopStats
+	}
+	srv := &api.Server{Token: string(cfg.Token), AllowMetrics: cfg.MetricsPublic, Applier: mgr, Collector: collector, HopEnabled: cfg.HopEnabled, ApplyTimeout: cfg.ApplyTimeout}
 	httpSrv := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	bootCtx, cancelBoot := context.WithCancel(ctx)
 	defer cancelBoot()

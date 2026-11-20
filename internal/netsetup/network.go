@@ -32,6 +32,14 @@ type Executor interface {
 	Run(argv []string) (stdout string, exitCode int, err error)
 }
 
+// NewCommandExecutor returns an executor for a command found on PATH by default.
+func NewCommandExecutor(path string) Executor {
+	if path == "" {
+		path = "iptables"
+	}
+	return commandExecutor{path}
+}
+
 type commandExecutor struct{ path string }
 
 func (e commandExecutor) Run(argv []string) (string, int, error) {
@@ -265,6 +273,9 @@ func splitRule(line string) ([]string, error) {
 	}
 	return fields, nil
 }
+
+// SplitRule parses one rule from iptables -S output.
+func SplitRule(line string) ([]string, error) { return splitRule(line) }
 
 func hasComment(rule []string, tag string) bool {
 	for i := 0; i+1 < len(rule); i++ {

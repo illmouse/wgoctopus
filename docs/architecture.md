@@ -11,6 +11,10 @@ On shutdown, the agent stops managed daemons but leaves its owned iptables rules
 - **Management WireGuard:** planned small sidecar establishing management tunnels to nodes and hops. Management connectivity establishes node liveness only, not client-path health.
 - **Hop:** planned statically configured UDP DNAT forwarder. The orchestrator selects a backend; switching requires conntrack cleanup.
 
+### Hop mode
+
+**Implemented.** The agent-owned nat chains are `WGOCT_HOP_DNAT` and `WGOCT_HOP_SNAT`; the filter chain is `WGOCT_HOP_FWD`. Rules are tagged `wgoct:hop:<listen_port>`. Backend switch rewrites the DNAT rule and flushes conntrack entries for that listen port. Hop support is opt-in with `--hop-enabled`. IPv4 forwarding must already be enabled and the hop IP assigned to its WAN interface; the agent does not modify either. Changing `backend_ip` is normal failover and is not dangerous.
+
 ## Data flows
 
 1. An operator or bot/UI updates desired configuration through the orchestrator API.

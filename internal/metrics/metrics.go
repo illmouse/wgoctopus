@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/illmouse/wgoctopus/internal/hop"
 	"github.com/illmouse/wgoctopus/internal/uapi"
 )
 
@@ -20,6 +21,7 @@ type Collector struct {
 	Now             func() time.Time
 	Version         string
 	GoVersion       string
+	HopStats        func() hop.Stats
 }
 
 // Render returns metrics in Prometheus text exposition format 0.0.4.
@@ -36,11 +38,21 @@ func (c *Collector) Render(ctx context.Context) []byte {
 	metricHeader(&b, "wgoctopus_agent_applied_revision", "gauge", "Applied configuration revision.")
 	metricHeader(&b, "wgoctopus_agent_build_info", "gauge", "Build information.")
 	metricHeader(&b, "wgoctopus_daemon_restarts_total", "counter", "Daemon restarts for the interface.")
+	if c.HopStats != nil {
+		metricHeader(&b, "wgoctopus_hop_routes", "gauge", "Configured hop routes.")
+		metricHeader(&b, "wgoctopus_hop_conntrack_flushed_total", "counter", "Conntrack entries flushed by hop reconciliation.")
+		metricHeader(&b, "wgoctopus_hop_conntrack_flush_errors_total", "counter", "Conntrack flush errors during hop reconciliation.")
+		metricHeader(&b, "wgoctopus_hop_apply_errors_total", "counter", "Hop reconciliation errors.")
+	}
 
 	if c.AppliedRevision != nil {
 		fmt.Fprintf(&b, "wgoctopus_agent_applied_revision %d\n", c.AppliedRevision())
 	}
 	fmt.Fprintf(&b, "wgoctopus_agent_build_info{version=%s,go_version=%s} 1\n", quote(c.Version), quote(c.GoVersion))
+	if c.HopStats != nil {
+		s := c.HopStats()
+		fmt.Fprintf(&b, "wgoctopus_hop_routes %d\nwgoctopus_hop_conntrack_flushed_total %d\nwgoctopus_hop_conntrack_flush_errors_total %d\nwgoctopus_hop_apply_errors_total %d\n", s.Routes, s.FlushedTotal, s.FlushErrorsTotal, s.ApplyErrorsTotal)
+	}
 	now := time.Now()
 	if c.Now != nil {
 		now = c.Now()
@@ -95,6 +107,9 @@ func (c *Collector) WriteTo(ctx context.Context, w io.Writer) (int64, error) {
 }
 
 func (c *Collector) readLive(ctx context.Context, name string) (uapi.Live, error) {
+	if err := ctx.Err(); err != nil {
+		return uapi.Live{}, err
+	}
 	if c.Device == nil {
 		return uapi.Live{}, fmt.Errorf("no device accessor")
 	}

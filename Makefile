@@ -1,4 +1,4 @@
-.PHONY: help schema-check ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch orch-test orch-lint
+.PHONY: help schema-check schema-validate ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch orch-test orch-lint
 
 help:
 	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e orch-test orch-lint'
@@ -11,12 +11,23 @@ e2e-orch:
 	@./scripts/e2e-orch.sh "$(HOST)"
 
 schema-check:
-	@if python3 -c 'import jsonschema' >/dev/null 2>&1; then \
+	@if command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then \
+		$(MAKE) schema-validate; \
+	else \
+	if python3 -c 'import jsonschema' >/dev/null 2>&1; then \
 		python3 -c 'import json, jsonschema; schema=json.load(open("schema/state.schema.json")); data=json.load(open("schema/examples/state.example.json")); jsonschema.Draft202012Validator(schema).validate(data); print("schema example valid")'; \
 	else \
 		printf '%s\n' 'WARNING: python3 jsonschema is unavailable; checking JSON syntax only'; \
-		python3 -c 'import json; json.load(open("schema/state.schema.json")); json.load(open("schema/examples/state.example.json")); print("JSON syntax valid")'; \
+		python3 -c 'import json, pathlib; json.load(open("schema/state.schema.json")); [json.load(p.open()) for p in pathlib.Path("schema/examples").glob("*.json")]; print("JSON syntax valid")'; \
+	fi; \
 	fi
+
+schema-validate:
+	@if [ ! -d /tmp/opencode/ajv/node_modules ]; then \
+		mkdir -p /tmp/opencode/ajv && cd /tmp/opencode/ajv && npm init -y >/dev/null 2>&1; \
+		cd /tmp/opencode/ajv && npm i ajv ajv-formats --no-audit --no-fund; \
+	fi
+	@NODE_PATH=/tmp/opencode/ajv/node_modules node scripts/schema-validate.js
 
 ship:
 	@test -n "$(IMAGE)" -a -n "$(HOST)" || { printf '%s\n' 'Usage: make ship IMAGE=<image:tag> HOST=<ssh-target>' >&2; exit 2; }

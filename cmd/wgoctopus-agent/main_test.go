@@ -19,6 +19,22 @@ func TestParseConfig(t *testing.T) {
 		}
 		return ""
 	}
+	t.Run("hop flag and environment", func(t *testing.T) {
+		base := []string{"--listen", "127.0.0.1:80", "--token", "x"}
+		c, err := parseConfig(append(base, "--hop-enabled"), func(string) string { return "" })
+		if err != nil || !c.HopEnabled {
+			t.Fatalf("flag config=%+v err=%v", c, err)
+		}
+		c, err = parseConfig(base, func(k string) string {
+			if k == "WGOCTOPUS_HOP_ENABLED" {
+				return "true"
+			}
+			return ""
+		})
+		if err != nil || !c.HopEnabled {
+			t.Fatalf("env config=%+v err=%v", c, err)
+		}
+	})
 	tests := []struct {
 		name               string
 		args               []string

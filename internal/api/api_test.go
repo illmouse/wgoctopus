@@ -111,6 +111,32 @@ func TestPutUsesApplierAndReportsErrors(t *testing.T) {
 	}
 }
 
+func TestHopEnabledGate(t *testing.T) {
+	body := `{"revision":5,"interfaces":[],"hop":{"wan_interface":"eth0","hop_ip":"192.0.2.1","routes":[]}}`
+	a := &fakeApplier{}
+	s := &Server{Token: "secret", Applier: a}
+	call := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/v1/state", bytes.NewBufferString(body))
+		r.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	w := call()
+	if w.Code != 422 || !bytes.Contains(w.Body.Bytes(), []byte("hop mode is disabled on this agent (start with --hop-enabled)")) || a.calls != 0 {
+		t.Fatalf("disabled: %d %s calls=%d", w.Code, w.Body.String(), a.calls)
+	}
+	s.HopEnabled = true
+	w = call()
+	if w.Code != 204 || a.calls != 1 {
+		t.Fatalf("enabled: %d calls=%d", w.Code, a.calls)
+	}
+	w = call()
+	if w.Code != 409 || a.calls != 1 {
+		t.Fatalf("stale: %d calls=%d", w.Code, a.calls)
+	}
+}
+
 type blockingApplier struct{ entered chan struct{} }
 
 func (a blockingApplier) Apply(state.State, bool) error { close(a.entered); select {} }

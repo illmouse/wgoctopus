@@ -27,6 +27,7 @@ type Server struct {
 	Metrics      func() string
 	Collector    MetricsCollector
 	Applier      Applier
+	HopEnabled   bool
 	Apply        func(state.State, bool) error // Deprecated: use Applier.
 	ApplyTimeout time.Duration
 	applyMu      sync.Mutex
@@ -95,6 +96,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 		if e := v.Validate(); e != nil {
 			http.Error(w, e.Error(), 422)
+			return
+		}
+		if v.Hop != nil && !s.HopEnabled {
+			http.Error(w, "hop mode is disabled on this agent (start with --hop-enabled)", 422)
 			return
 		}
 		force := r.URL.Query().Get("allow_dangerous") == "true"

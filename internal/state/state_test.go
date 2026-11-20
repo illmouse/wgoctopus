@@ -101,3 +101,108 @@ func TestRejectsInvalidHeaderRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestHopContract(t *testing.T) {
+	if (State{}).String() != "[redacted]" || (State{}).LogValue().String() != "[redacted]" || (Interface{}).String() != "[redacted]" || (Interface{}).LogValue().String() != "[redacted]" || (Peer{}).String() != "[redacted]" || (Peer{}).LogValue().String() != "[redacted]" || (Hop{}).String() != "[redacted]" || (Hop{}).LogValue().String() != "[redacted]" || (HopRoute{}).String() != "[redacted]" || (HopRoute{}).LogValue().String() != "[redacted]" {
+		t.Fatal("redaction methods")
+	}
+	base := State{Revision: 1, Interfaces: []Interface{}, Hop: &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: []HopRoute{{ListenPort: 51820, BackendIP: "10.0.0.2", BackendPort: 51820}}}}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("../../schema/examples/state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var collision State
+	if err := json.Unmarshal(fixture, &collision); err != nil {
+		t.Fatal(err)
+	}
+	collision.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: []HopRoute{{ListenPort: int(collision.Interfaces[0].ListenPort), BackendIP: "10.0.0.2", BackendPort: 51820}}}
+	if collision.Validate() == nil {
+		t.Fatal("accepted hop/interface port collision")
+	}
+	empty := base
+	empty.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10"}
+	if err := empty.Validate(); err != nil {
+		t.Fatalf("empty routes: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*State)
+	}{
+		{"duplicate listen_port", func(s *State) { s.Hop.Routes = append(s.Hop.Routes, s.Hop.Routes[0]) }},
+		{"bad hop ip", func(s *State) { s.Hop.HopIP = "127.0.0.1" }},
+		{"bad backend ip", func(s *State) { s.Hop.Routes[0].BackendIP = "0.0.0.0" }},
+		{"backend equals hop", func(s *State) { s.Hop.Routes[0].BackendIP = s.Hop.HopIP }},
+		{"bad port", func(s *State) { s.Hop.Routes[0].ListenPort = 65536 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base
+			s.Hop = &Hop{WANInterface: base.Hop.WANInterface, HopIP: base.Hop.HopIP, Routes: append([]HopRoute(nil), base.Hop.Routes...)}
+			tc.mutate(&s)
+			if s.Validate() == nil {
+				t.Fatal("accepted invalid hop")
+			}
+		})
+	}
+	invalidBackend := base
+	invalidBackend.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: []HopRoute{{ListenPort: 51820, BackendIP: "2001:db8::1", BackendPort: 51820}}}
+	if invalidBackend.Validate() == nil {
+		t.Fatal("accepted IPv6 backend")
+	}
+	tooMany := base
+	tooMany.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: make([]HopRoute, 257)}
+	if tooMany.Validate() == nil {
+		t.Fatal("accepted more than 256 routes")
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Hop)
+	}{
+		{"wan", func(h *Hop) { h.WANInterface = "bad iface" }},
+		{"long wan", func(h *Hop) { h.WANInterface = "interface-name-too-long" }},
+		{"non-ipv4", func(h *Hop) { h.HopIP = "2001:db8::1" }},
+		{"multicast", func(h *Hop) { h.HopIP = "224.0.0.1" }},
+		{"route name", func(h *Hop) { h.Routes[0].Name = "bad name" }},
+		{"backend port", func(h *Hop) { h.Routes[0].BackendPort = 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base
+			s.Hop = &Hop{WANInterface: base.Hop.WANInterface, HopIP: base.Hop.HopIP, Routes: append([]HopRoute(nil), base.Hop.Routes...)}
+			tc.mutate(s.Hop)
+			if s.Validate() == nil {
+				t.Fatal("accepted invalid hop")
+			}
+		})
+	}
+	old := fixture
+	var oldState State
+	if err = json.Unmarshal(old, &oldState); err != nil {
+		t.Fatal(err)
+	}
+	if oldState.Hop != nil {
+		t.Fatal("old example unexpectedly has hop")
+	}
+	oldChecksum := oldState.Checksum()
+	if got := oldState.Checksum(); got != oldChecksum {
+		t.Fatal("hop omission changed existing checksum")
+	}
+	oldState.Hop = nil
+	if oldState.Checksum() != oldChecksum {
+		t.Fatal("nil hop changed existing checksum")
+	}
+	changed := base
+	changed.Hop = &Hop{WANInterface: base.Hop.WANInterface, HopIP: base.Hop.HopIP, Routes: append([]HopRoute(nil), base.Hop.Routes...)}
+	changed.Hop.Routes[0].BackendIP = "10.0.0.3"
+	if base.Checksum() == changed.Checksum() {
+		t.Fatal("backend change missing from checksum")
+	}
+	reordered := base
+	reordered.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: []HopRoute{{ListenPort: 51821, BackendIP: "10.0.0.3", BackendPort: 80}, {ListenPort: 51820, BackendIP: "10.0.0.2", BackendPort: 51820}}}
+	ordered := reordered
+	ordered.Hop = &Hop{WANInterface: "eth0", HopIP: "192.0.2.10", Routes: []HopRoute{reordered.Hop.Routes[1], reordered.Hop.Routes[0]}}
+	if reordered.Checksum() != ordered.Checksum() {
+		t.Fatal("route input ordering changed checksum")
+	}
+}

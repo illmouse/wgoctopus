@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/illmouse/wgoctopus/internal/hop"
 	"github.com/illmouse/wgoctopus/internal/metrics"
 	"github.com/illmouse/wgoctopus/internal/netsetup"
 	"github.com/illmouse/wgoctopus/internal/reconcile"
@@ -39,6 +41,11 @@ type Store interface {
 // DeviceFactory returns the UAPI device for an interface.
 type DeviceFactory func(name string) uapi.Device
 
+// HopApplier reconciles optional hop forwarding rules.
+type HopApplier interface {
+	Apply(context.Context, *state.Hop) (hop.Result, error)
+}
+
 // Manager serializes all operations that mutate managed interfaces.
 type Manager struct {
 	Daemons   Supervisor
@@ -48,12 +55,15 @@ type Manager struct {
 	SocketDir string
 	Device    DeviceFactory
 	After     func(time.Duration) <-chan time.Time
+	Hop       HopApplier
 
 	mu              sync.Mutex
 	stateMu         sync.RWMutex
 	desired         state.State
 	appliedRevision int64
 	checksum        string
+	hopWasApplied   bool
+	warnings        []string
 }
 
 // FileStore adapts the filesystem store to Manager's presence-aware store API.
@@ -115,6 +125,19 @@ func (m *Manager) ApplyContext(ctx context.Context, v state.State, allowDangerou
 			}
 		}
 	}
+	m.stateMu.RLock()
+	hopWasApplied := m.hopWasApplied
+	m.stateMu.RUnlock()
+	if m.Hop != nil && (v.Hop != nil || hopWasApplied) {
+		result, err := m.Hop.Apply(ctx, v.Hop)
+		for _, warning := range result.Warnings {
+			slog.Warn("hop apply warning", "warning", warning)
+		}
+		m.warnings = append([]string(nil), result.Warnings...)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("hop: %w", err))
+		}
+	}
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -125,10 +148,26 @@ func (m *Manager) ApplyContext(ctx context.Context, v state.State, allowDangerou
 	}
 	m.stateMu.Lock()
 	m.desired = v
+	m.hopWasApplied = v.Hop != nil
 	m.appliedRevision = int64(v.Revision)
 	m.checksum = v.Checksum()
 	m.stateMu.Unlock()
 	return nil
+}
+
+// Warnings returns warnings from the latest hop reconciliation.
+func (m *Manager) Warnings() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.warnings...)
+}
+
+// HopStats returns current hop metrics, or zero values when the applier has no stats.
+func (m *Manager) HopStats() hop.Stats {
+	if stats, ok := m.Hop.(interface{ Stats() hop.Stats }); ok {
+		return stats.Stats()
+	}
+	return hop.Stats{}
 }
 
 func (m *Manager) applyInterface(ctx context.Context, in state.Interface, allow bool) error {
@@ -201,6 +240,7 @@ func (m *Manager) Boot(ctx context.Context, interval time.Duration) error {
 	// the runtime is unavailable and application is being retried.
 	m.stateMu.Lock()
 	m.desired = v
+	m.hopWasApplied = v.Hop != nil
 	m.appliedRevision = int64(v.Revision)
 	m.checksum = v.Checksum()
 	m.stateMu.Unlock()

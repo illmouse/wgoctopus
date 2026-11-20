@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/illmouse/wgoctopus/internal/hop"
 	"github.com/illmouse/wgoctopus/internal/uapi"
 )
 
@@ -76,5 +77,21 @@ func TestRenderFailureEscapingAndContext(t *testing.T) {
 	cancel()
 	if !strings.Contains(string(c.Render(ctx)), `wg_interface_up{interface="good"} 0`) {
 		t.Error("canceled context should mark lookup down")
+	}
+}
+
+func TestHopMetricsOnlyWhenEnabled(t *testing.T) {
+	c := &Collector{}
+	if out := string(c.Render(context.Background())); strings.Contains(out, "wgoctopus_hop_") {
+		t.Fatalf("disabled hop metrics: %s", out)
+	}
+	c.HopStats = func() hop.Stats {
+		return hop.Stats{FlushedTotal: 3, FlushErrorsTotal: 2, ApplyErrorsTotal: 1, Routes: 4}
+	}
+	out := string(c.Render(context.Background()))
+	for _, metric := range []string{"wgoctopus_hop_routes 4", "wgoctopus_hop_conntrack_flushed_total 3", "wgoctopus_hop_conntrack_flush_errors_total 2", "wgoctopus_hop_apply_errors_total 1"} {
+		if !strings.Contains(out, metric) {
+			t.Errorf("missing %q", metric)
+		}
 	}
 }

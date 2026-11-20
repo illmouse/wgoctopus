@@ -16,6 +16,7 @@ import (
 type State struct {
 	Revision   uint64      `json:"revision"`
 	Interfaces []Interface `json:"interfaces"`
+	Hop        *Hop        `json:"hop,omitempty"`
 }
 
 func (State) String() string       { return "[redacted]" }
@@ -60,11 +61,30 @@ type Peer struct {
 	AllowedIPs   []string `json:"allowed_ips"`
 }
 
+type Hop struct {
+	WANInterface string     `json:"wan_interface"`
+	HopIP        string     `json:"hop_ip"`
+	Routes       []HopRoute `json:"routes"`
+}
+
+type HopRoute struct {
+	ListenPort  int    `json:"listen_port"`
+	BackendIP   string `json:"backend_ip"`
+	BackendPort int    `json:"backend_port"`
+	Name        string `json:"name,omitempty"`
+}
+
+func (Hop) String() string            { return "[redacted]" }
+func (Hop) LogValue() slog.Value      { return slog.StringValue("[redacted]") }
+func (HopRoute) String() string       { return "[redacted]" }
+func (HopRoute) LogValue() slog.Value { return slog.StringValue("[redacted]") }
+
 func (Peer) String() string       { return "[redacted]" }
 func (Peer) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 func (s State) Validate() error {
 	names := map[string]bool{}
+	ports := map[uint16]bool{}
 	for _, in := range s.Interfaces {
 		if in.Name == "" || len(in.Name) > 15 || names[in.Name] {
 			return fmt.Errorf("invalid or duplicate interface name %q", in.Name)
@@ -73,6 +93,7 @@ func (s State) Validate() error {
 		if in.ListenPort == 0 {
 			return fmt.Errorf("interface %s: listen_port must be 1..65535", in.Name)
 		}
+		ports[in.ListenPort] = true
 		if err := key(in.PrivateKey); err != nil {
 			return fmt.Errorf("interface %s private_key: %w", in.Name, err)
 		}
@@ -152,7 +173,52 @@ func (s State) Validate() error {
 			}
 		}
 	}
+	if s.Hop != nil {
+		h := s.Hop
+		if !validIface(h.WANInterface) {
+			return fmt.Errorf("invalid hop wan_interface")
+		}
+		hopIP, err := netip.ParseAddr(h.HopIP)
+		if err != nil || !hopIP.Is4() || hopIP.IsUnspecified() || hopIP.IsLoopback() || hopIP.IsMulticast() {
+			return fmt.Errorf("invalid hop hop_ip")
+		}
+		if len(h.Routes) > 256 {
+			return fmt.Errorf("hop routes exceeds 256")
+		}
+		seen := map[int]bool{}
+		for _, r := range h.Routes {
+			if r.ListenPort < 1 || r.ListenPort > 65535 || seen[r.ListenPort] {
+				return fmt.Errorf("invalid or duplicate hop listen_port")
+			}
+			seen[r.ListenPort] = true
+			if ports[uint16(r.ListenPort)] {
+				return fmt.Errorf("hop listen_port collides with interface")
+			}
+			ip, err := netip.ParseAddr(r.BackendIP)
+			if err != nil || !ip.Is4() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip == hopIP {
+				return fmt.Errorf("invalid hop backend_ip")
+			}
+			if r.BackendPort < 1 || r.BackendPort > 65535 {
+				return fmt.Errorf("invalid hop backend_port")
+			}
+			if r.Name != "" && !validIface(r.Name) {
+				return fmt.Errorf("invalid hop route name")
+			}
+		}
+	}
 	return nil
+}
+
+func validIface(name string) bool {
+	if name == "" || len(name) > 15 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("_=+.-", r)) {
+			return false
+		}
+	}
+	return true
 }
 func key(s string) error {
 	b, e := base64.StdEncoding.DecodeString(s)
@@ -162,6 +228,9 @@ func key(s string) error {
 	return nil
 }
 func (s State) Canonical() ([]byte, error) {
+	if s.Hop != nil {
+		sort.Slice(s.Hop.Routes, func(i, j int) bool { return s.Hop.Routes[i].ListenPort < s.Hop.Routes[j].ListenPort })
+	}
 	for i := range s.Interfaces {
 		sort.Slice(s.Interfaces[i].Peers, func(a, b int) bool { return s.Interfaces[i].Peers[a].PublicKey < s.Interfaces[i].Peers[b].PublicKey })
 		for j := range s.Interfaces[i].Peers {

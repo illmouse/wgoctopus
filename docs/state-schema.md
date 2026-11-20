@@ -28,3 +28,8 @@ JSON Schema provides shape-level checks; the agent must also reject duplicate in
 Sending the same revision and state repeatedly must not cause further mutations. Equal revision with different content is a conflict; lower revisions are rejected. The checksum is over a documented canonical representation (implementation detail to define before agent stage).
 
 Changes to `mtu`, `egress_interface`, or `snat_ip` are not dangerous. Changes to `private_key`, `listen_port`, `jc`, `jmin`, `jmax`, `s1`–`s4`, `h1`–`h4`, or `i1`–`i5` are dangerous and require explicit acknowledgement. Initial interface creation (when the device has no private key) is not dangerous. Address is not currently managed by device UAPI. Peer changes are not dangerous. Key material is base64 in state and UAPI hex on the wire.
+# Hop
+
+The optional `hop` object configures this agent as a UDP DNAT forwarder, independently of AWG interfaces (or alongside them). `wan_interface` is the outgoing interface and `hop_ip` is the IPv4 destination clients connect to on this host. `routes` may be empty (remove all hop rules) and is limited to 256 entries. Each route maps a unique `listen_port` to an IPv4 `backend_ip` and `backend_port`; optional `name` follows interface-name rules.
+
+Backend IP changes are normal failover operations and are **not dangerous**. The agent sorts routes by listen port for checksums. A hop port may not overlap an AWG interface listen port.
