@@ -8,3 +8,6 @@
 6. **Failover:** confirmed active/standby failover, then active-active if needed.
 
 The data plane must remain independent of orchestrator availability. Back up the orchestrator store; node backups are not required. Active-active would use hop-side nftables `jhash` selection by client source IP.
+# Stage 3.5 — REST API and container
+
+REST API, in-process reconciler lifecycle, and container packaging are complete. Tests, coverage, lint, image, smoke, and repository hygiene gates pass.

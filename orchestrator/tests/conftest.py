@@ -2,6 +2,7 @@ import os
 
 import pytest
 import pytest_asyncio
+from api_helpers import api_client  # noqa: F401
 from cryptography.fernet import Fernet
 from fake_agent import FakeAgent
 
@@ -9,6 +10,11 @@ from wgoctopus_orch.crypto import Crypto
 from wgoctopus_orch.db import make_engine, make_session_factory, upgrade_to_head
 
 os.environ.setdefault("USER", "tester")
+
+
+@pytest.fixture
+def api(request):
+    return request.getfixturevalue("api_client")
 
 
 @pytest_asyncio.fixture

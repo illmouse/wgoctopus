@@ -1,4 +1,4 @@
-.PHONY: help schema-check ship agent-image orchestrator-image agent-build agent-test e2e orch-test orch-lint
+.PHONY: help schema-check ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e orch-test orch-lint
 
 help:
 	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e orch-test orch-lint'
@@ -28,7 +28,13 @@ agent-image:
 	docker build -f agent/Dockerfile -t wgoctopus-agent:dev --build-arg VERSION=dev .
 
 orchestrator-image:
-	@printf '%s\n' 'not implemented yet'
+	$(MAKE) orch-image
+
+orch-image:
+	docker build -f orchestrator/Dockerfile -t wgoctopus-orchestrator:dev .
+
+orch-smoke:
+	@./scripts/orch-smoke.sh
 
 orch-test:
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_orch --cov-report=term-missing --cov-fail-under=85 -q'

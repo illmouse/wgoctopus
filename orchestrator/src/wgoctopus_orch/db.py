@@ -30,8 +30,9 @@ def make_session_factory(engine):
 
 def upgrade_to_head(url: str | None = None) -> None:
     here = Path(__file__).resolve().parents[2]
-    config = Config(str(here / "alembic.ini"))
-    config.set_main_option("script_location", str(here / "migrations"))
+    root = Path(__import__("os").getenv("WGOCTOPUS_MIGRATIONS_PATH", str(here / "migrations")))
+    config = Config(__import__("os").getenv("WGOCTOPUS_ALEMBIC_CONFIG", str(here / "alembic.ini")))
+    config.set_main_option("script_location", str(root))
     if url:
         config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     elif database_url() != "sqlite:///./wgoctopus.db":

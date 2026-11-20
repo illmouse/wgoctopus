@@ -1,6 +1,6 @@
 # Orchestrator
 
-The orchestrator is the central desired-state store. This stage implements the SQLite data model, key management, transactional service operations, renderer, and client configuration generation; API and reconciliation are later work.
+The orchestrator is the central desired-state store, REST API, and in-process reconciler. It provides SQLite persistence, key management, transactional service operations, rendering, and client configuration generation.
 
 ## Layout and checks
 
@@ -37,3 +37,18 @@ Push delivery defaults to an SSH local-forward tunnel from the orchestrator to t
 | `WGOCTOPUS_RECONCILE_NODE_TIMEOUT` | `120` | Per-node reconciliation timeout, seconds |
 
 The agent requires `allow_dangerous=true` as a query parameter on `PUT /v1/state`; it is never part of the state JSON. Push attempts are not retried. Revision is the synchronization key; a remote-ahead revision is reported without overwriting.
+# Orchestrator
+
+Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPUS_API_TOKEN=<token> python -m wgoctopus_orch`. The service uses one process/worker because reconciliation runs in-process. Docker: `make orch-image`, then mount `/var/lib/wgoctopus` and provide master key and API token.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WGOCTOPUS_API_TOKEN` / `WGOCTOPUS_API_TOKEN_FILE` | required | Admin bearer token, direct value or file |
+| `WGOCTOPUS_API_ALLOW_NO_AUTH` | false | Development-only auth bypass |
+| `WGOCTOPUS_API_HOST` / `WGOCTOPUS_API_PORT` | 127.0.0.1 / 8080 | Listen address |
+| `WGOCTOPUS_API_DOCS` | false | Enable OpenAPI and Swagger docs |
+| `WGOCTOPUS_RECONCILER_ENABLED` | true | Run reconciler within API process |
+| `WGOCTOPUS_AUTO_MIGRATE` | true | Migrate on application startup |
+| `WGOCTOPUS_CLIENT_ENDPOINT_HOST` | unset | Default client config endpoint |
+
+Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
