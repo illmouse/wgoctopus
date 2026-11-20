@@ -1,10 +1,14 @@
-.PHONY: help schema-check ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e orch-test orch-lint
+.PHONY: help schema-check ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch orch-test orch-lint
 
 help:
 	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e orch-test orch-lint'
 
 e2e:
 	@./scripts/e2e.sh local
+
+e2e-orch:
+	@test -n "$(HOST)" || { printf '%s\n' 'Usage: make e2e-orch HOST=root@host' >&2; exit 2; }
+	@./scripts/e2e-orch.sh "$(HOST)"
 
 schema-check:
 	@if python3 -c 'import jsonschema' >/dev/null 2>&1; then \

@@ -24,8 +24,13 @@ def run_migrations_online():
     with connectable.connect() as connection:
         if connection.dialect.name == "sqlite":
             connection.exec_driver_sql("PRAGMA foreign_keys=ON")
-        context.configure(connection=connection, target_metadata=target_metadata)
+            connection.commit()
+        context.configure(connection=connection, target_metadata=target_metadata,
+                          transactional_ddl=connection.dialect.name == "sqlite")
         with context.begin_transaction():
+            if connection.dialect.name == "sqlite":
+                # sqlite3's legacy transaction mode does not begin a transaction for DDL.
+                connection.exec_driver_sql("BEGIN")
             context.run_migrations()
 
 

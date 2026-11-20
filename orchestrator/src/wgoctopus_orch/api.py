@@ -106,7 +106,11 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     @asynccontextmanager
     async def lifespan(app):
         if migrate if migrate is not None else os.getenv("WGOCTOPUS_AUTO_MIGRATE", "true").lower() == "true":
-            upgrade_to_head()
+            try:
+                upgrade_to_head()
+            except Exception:
+                log.exception("Database migration failed")
+                raise
         if reconciler is None and enabled:
             app.state.reconciler = build_reconciler(__import__("wgoctopus_orch.config", fromlist=["Settings"]).Settings.from_env(), sessions)
         else:

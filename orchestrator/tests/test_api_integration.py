@@ -15,6 +15,22 @@ from wgoctopus_orch.reconciler import Reconciler
 from wgoctopus_orch.transport import DirectHttpTransport
 
 
+def test_upgrade_is_idempotent_and_database_survives_reopen(tmp_path):
+    url = f"sqlite:///{tmp_path / 'upgrade.db'}"
+    upgrade_to_head(url)
+    engine = make_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE persisted_data (value TEXT)"))
+        connection.execute(text("INSERT INTO persisted_data VALUES ('kept')"))
+    engine.dispose()
+
+    upgrade_to_head(url)
+    engine = make_engine(url)
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT value FROM persisted_data")).scalar_one() == "kept"
+    engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_api_mutations_reconcile_to_fake_agent(session, fake_agent_factory, crypto, monkeypatch):
     agent, = await fake_agent_factory()

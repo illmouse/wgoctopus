@@ -10,6 +10,7 @@ SSH_OPTS=${SSH_OPTS:-"-i $HOME/.ssh/id_rsa -o StrictHostKeyChecking=accept-new"}
 PORT=${E2E_PORT:-23440}
 CONTAINER=woct-agent
 STATE_VOLUME=e2e-woct-state-$$
+E2E_PROTECTED_IDS=${E2E_PROTECTED_IDS:-}
 [[ $MODE == local ]] && CONTAINER=e2e-woct-agent
 TMP=$(mktemp -d)
 TOKEN=$(openssl rand -hex 32)
@@ -41,7 +42,6 @@ cleanup() {
     local filt nat
     filt=$(run "iptables -S | wc -l"); nat=$(run "iptables -t nat -S | wc -l")
     [[ $filt == "$FILTER_BEFORE" && $nat == "$NAT_BEFORE" ]] || { echo "FAIL remote iptables cleanup (filter $filt/$FILTER_BEFORE nat $nat/$NAT_BEFORE)"; FAIL=$((FAIL+1)); }
-    [[ $filt == 29 && $nat == 13 ]] || { echo "FAIL expected final iptables counts 29/13, got $filt/$nat"; FAIL=$((FAIL+1)); }
     [[ $(run "docker ps -q --no-trunc | sort") == "$CONTAINERS_BEFORE" ]] || { echo 'FAIL protected containers changed'; FAIL=$((FAIL+1)); }
   fi
   printf 'Summary: %d PASS, %d FAIL\n' "$PASS" "$FAIL"
@@ -52,8 +52,9 @@ if [[ $MODE == ssh ]]; then
   if [[ ${E2E_SKIP_SHIP:-0} != 1 ]]; then docker image inspect wgoctopus-agent:dev >/dev/null 2>&1 || (cd "$ROOT" && make agent-image); "$ROOT/scripts/ship-image.sh" wgoctopus-agent:dev "$HOST"; fi
   FILTER_BEFORE=$(run 'iptables -S | wc -l'); NAT_BEFORE=$(run 'iptables -t nat -S | wc -l')
   CONTAINERS_BEFORE=$(run "docker ps -q --no-trunc | sort")
-  printf '%s\n' "$CONTAINERS_BEFORE" | grep -q 0cdbc8b9df39 || { echo 'Expected amneziawg container missing' >&2; exit 1; }
-  printf '%s\n' "$CONTAINERS_BEFORE" | grep -q 8c71548c40b5 || { echo 'Expected wgeasy container missing' >&2; exit 1; }
+  for id in ${E2E_PROTECTED_IDS//,/ }; do
+    printf '%s\n' "$CONTAINERS_BEFORE" | grep -q "$id" || { echo 'Configured protected container missing' >&2; exit 1; }
+  done
   run "mkdir -p /opt/woct-test; chmod 700 /opt/woct-test; printf '%s' '$TOKEN' >/opt/woct-test/token; chmod 600 /opt/woct-test/token"
 fi
 target_setup

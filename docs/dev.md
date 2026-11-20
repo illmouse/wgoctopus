@@ -20,6 +20,10 @@ Without `jsonschema`, `schema-check` reports a warning and checks that the examp
 
 Run `make e2e` to exercise the agent locally with Docker. To run against a dedicated test host, run `scripts/e2e.sh ssh user@test-host` (override `SSH_OPTS` if needed). The test starts and removes its own container, link, and owned firewall rules; use only a disposable test host.
 
+## Orchestrator end-to-end test
+
+Run `make e2e-orch HOST=root@<test-host>` to test the orchestrator against a real agent over SSH. The script builds missing images, ships the agent unless `E2E_SKIP_SHIP=1`, and cleans up its containers, `woct0`, owned firewall rules, and `/opt/woct-test`. It checks host firewall counts and container IDs before and after; use only the designated disposable test host.
+
 ## Manual image delivery
 
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:
