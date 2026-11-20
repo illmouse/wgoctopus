@@ -26,6 +26,18 @@ Run `make e2e-orch HOST=root@<test-host>` to test the orchestrator against a rea
 
 ## Manual image delivery
 
+## Hop-mode end-to-end test
+
+Run against a disposable test host only; it exercises iptables and removes its test state during cleanup:
+
+```sh
+make e2e-hop HOST=root@test-host
+```
+
+The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictHostKeyChecking=accept-new` by default; set `SSH_OPTS` to override.
+
+## Manual image delivery
+
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:
 
 ```sh
