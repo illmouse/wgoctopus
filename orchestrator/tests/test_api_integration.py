@@ -31,6 +31,15 @@ def test_upgrade_is_idempotent_and_database_survives_reopen(tmp_path):
     engine.dispose()
 
 
+async def _converge(rec, predicate, attempts=20):
+    """Reconcile until predicate holds (a lifespan reconciler may run concurrently)."""
+    for _ in range(attempts):
+        await rec.reconcile_once()
+        if predicate():
+            return
+        await asyncio.sleep(0.1)
+
+
 @pytest.mark.asyncio
 async def test_api_mutations_reconcile_to_fake_agent(session, fake_agent_factory, crypto, monkeypatch):
     agent, = await fake_agent_factory()
@@ -51,10 +60,10 @@ async def test_api_mutations_reconcile_to_fake_agent(session, fake_agent_factory
         assert applied["name"] == instance["name"] and applied["private_key"]
         assert any(p["public_key"] == peer["public_key"] for p in applied["peers"])
         client.patch(f"/v1/peers/{peer['id']}", json={"enabled":False}).raise_for_status()
-        await rec.reconcile_once()
+        await _converge(rec, lambda: agent.state["interfaces"][0]["peers"] == [])
         assert agent.state["interfaces"][0]["peers"] == []
         client.patch(f"/v1/peers/{peer['id']}", json={"enabled":True}).raise_for_status()
-        await rec.reconcile_once()
+        await _converge(rec, lambda: bool(agent.state["interfaces"][0]["peers"]))
         assert agent.state["interfaces"][0]["peers"][0]["public_key"] == peer["public_key"]
 
 

@@ -18,7 +18,7 @@ from . import service
 from .config import database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
-from .models import Event, Instance, Node, NodeObserved, NodeRevision, Peer, Placement
+from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer, Placement
 from .reconciler import build_reconciler
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ class InstanceIn(Strict):
 
 
 class InstancePatch(Strict):
+    listen_port: int | None = Field(default=None, ge=1, le=65535)
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
@@ -71,6 +72,10 @@ class NodeIn(Strict):
     egress_interface: str | None = None
     snat_ip: str | None = None
     enabled: bool = True
+    kind: str = Field(default="awg", pattern="^(awg|hop)$")
+    wan_interface: str | None = None
+    hop_ip: str | None = None
+    backend_ip: str | None = None
 
 
 class PeerIn(Strict):
@@ -95,6 +100,10 @@ class NodePatch(Strict):
     egress_interface: str | None = None
     snat_ip: str | None = None
     enabled: bool | None = None
+    kind: str | None = Field(default=None, pattern="^(awg|hop)$")
+    wan_interface: str | None = None
+    hop_ip: str | None = None
+    backend_ip: str | None = None
 
 
 def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None):
@@ -231,9 +240,11 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     def patch_instance(ident:int, body:InstancePatch, s:Session=Depends(db)):
         i=s.get(Instance,ident)
         if not i: raise HTTPException(404,"unknown instance")
-        for k,v in body.model_dump(exclude_unset=True).items(): setattr(i,k,v)
+        changes = body.model_dump(exclude_unset=True)
+        for k,v in changes.items(): setattr(i,k,v)
         nodes=placed_nodes(s,ident); s.flush()
         for n in nodes: service.bump_revision(s,n,cipher)
+        if "listen_port" in changes: service._bump_hops(s,ident,cipher)
         kick(s,nodes); return inst(i,s)
 
     @app.delete("/v1/instances/{ident}",dependencies=[Depends(auth)],status_code=204)
@@ -257,7 +268,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     def del_placement(ident:int,node_id:int,s:Session=Depends(db)):
         p=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.node_id==node_id))
         if not p: raise HTTPException(404,"unknown placement")
-        s.delete(p); s.flush(); service.bump_revision(s,node_id,cipher); kick(s,[node_id]); return Response(status_code=204)
+        instance_id=p.instance_id
+        s.delete(p); s.flush(); service.bump_revision(s,node_id,cipher)
+        service._bump_hops(s,instance_id,cipher)
+        kick(s,[node_id]); return Response(status_code=204)
 
     @app.post("/v1/nodes",dependencies=[Depends(auth)],status_code=201)
     def create_node(body:NodeIn,s:Session=Depends(db)):
@@ -285,6 +299,9 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 setattr(n, k, v)
         if body:
             service.bump_revision(s,ident,cipher)
+            if any(k in body for k in ("kind", "wan_interface", "hop_ip", "backend_ip")):
+                for hop_id in s.scalars(select(HopLink.hop_id).where(HopLink.hop_id == ident)).all():
+                    service.bump_revision(s,hop_id,cipher)
         kick(s,[ident]); return node(n,s)
 
     @app.delete("/v1/nodes/{ident}",dependencies=[Depends(auth)],status_code=204)

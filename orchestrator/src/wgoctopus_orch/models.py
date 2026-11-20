@@ -33,6 +33,10 @@ class Instance(Base):
 class Node(Base):
     __tablename__ = "nodes"
     id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String, default="awg", nullable=False)
+    wan_interface: Mapped[str | None] = mapped_column(String(15))
+    hop_ip: Mapped[str | None] = mapped_column(String)
+    backend_ip: Mapped[str | None] = mapped_column(String)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     ssh_host: Mapped[str] = mapped_column(String, nullable=False)
     ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False)
@@ -43,6 +47,14 @@ class Node(Base):
     egress_interface: Mapped[str | None] = mapped_column(String(15))
     snat_ip: Mapped[str | None] = mapped_column(String)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+class HopLink(Base):
+    __tablename__ = "hop_links"
+    __table_args__ = (UniqueConstraint("hop_id", "instance_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hop_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instances.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
 
 

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .config import schema_path
 from .crypto import Crypto
-from .models import Instance, Node, NodeRevision, Peer, Placement
+from .models import HopLink, Instance, Node, NodeRevision, Peer, Placement
 
 
 def render_node_state(session: Session, node_id: int, crypto: Crypto | None = None) -> dict:
@@ -17,6 +17,27 @@ def render_node_state(session: Session, node_id: int, crypto: Crypto | None = No
     if node is None:
         raise ValueError(f"unknown node {node_id}")
     revision = session.get(NodeRevision, node_id)
+    if node.kind == "hop":
+        routes = []
+        links = session.scalars(select(HopLink).where(HopLink.hop_id == node_id)).all()
+        for link in links:
+            active = session.scalars(select(Placement).where(
+                Placement.instance_id == link.instance_id, Placement.role == "active"
+            ).order_by(Placement.weight.desc(), Placement.node_id)).first()
+            if active is None:
+                continue
+            backend = session.get(Node, active.node_id)
+            instance = session.get(Instance, link.instance_id)
+            if backend is not None and backend.backend_ip:
+                routes.append({"listen_port": instance.listen_port, "backend_ip": backend.backend_ip,
+                               "backend_port": instance.listen_port, "name": instance.name})
+        result = {"revision": revision.desired_revision if revision else 0, "interfaces": [],
+                  "hop": {"wan_interface": node.wan_interface, "hop_ip": node.hop_ip,
+                          "routes": sorted(routes, key=lambda route: route["listen_port"])}}
+        with schema_path().open(encoding="utf-8") as file:
+            schema = json.load(file)
+        jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(result)
+        return result
     interfaces = []
     placements = session.scalars(select(Placement).where(Placement.node_id == node_id)).all()
     for placement in sorted(placements, key=lambda item: session.get(Instance, item.instance_id).name):

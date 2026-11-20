@@ -12,7 +12,17 @@ from sqlalchemy.orm import Session
 
 from .crypto import Crypto
 from .keys import generate_keypair, generate_psk, next_free_peer_ip
-from .models import Event, Instance, Node, NodeObserved, NodeRevision, Peer, Placement, now_utc
+from .models import (
+    Event,
+    HopLink,
+    Instance,
+    Node,
+    NodeObserved,
+    NodeRevision,
+    Peer,
+    Placement,
+    now_utc,
+)
 from .renderer import render_node_state
 
 
@@ -56,13 +66,14 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
 
 def create_node(session: Session, name, ssh_host, ssh_user, *, ssh_port=22, mgmt_mode="push",
                 agent_port=18080, agent_token=None, egress_interface=None, snat_ip=None,
-                enabled=True, crypto=None):
+                enabled=True, kind="awg", wan_interface=None, hop_ip=None, backend_ip=None, crypto=None):
     if mgmt_mode not in {"push", "pull"}:
         raise ValueError("mgmt_mode must be 'push' or 'pull'")
     node = Node(name=name, ssh_host=ssh_host, ssh_port=ssh_port, ssh_user=ssh_user,
                 mgmt_mode=mgmt_mode, agent_port=agent_port,
                 agent_token_enc=_crypto(crypto).encrypt(agent_token or secrets.token_urlsafe(32)),
-                egress_interface=egress_interface, snat_ip=snat_ip, enabled=enabled)
+                egress_interface=egress_interface, snat_ip=snat_ip, enabled=enabled,
+                kind=kind, wan_interface=wan_interface, hop_ip=hop_ip, backend_ip=backend_ip)
     with _transaction(session):
         session.add(node)
         session.flush()
@@ -93,16 +104,67 @@ def bump_revision(session: Session, node_id: int, crypto=None) -> bool:
         return True
 
 
+def _bump_hops(session, instance_id, crypto=None):
+    for hop_id in session.scalars(select(HopLink.hop_id).where(HopLink.instance_id == instance_id)):
+        bump_revision(session, hop_id, crypto)
+
+
 def place(session: Session, instance_id, node_id, role="active", weight=1, crypto=None):
     if role not in {"active", "standby"}:
         raise ValueError("role must be 'active' or 'standby'")
     with _transaction(session):
+        node = session.get(Node, node_id)
+        if node is not None and node.kind == "hop":
+            raise ValueError("cannot place an instance on a hop node")
         placement = Placement(instance_id=instance_id, node_id=node_id, role=role, weight=weight)
         session.add(placement)
         session.flush()
         _event(session, "placement.created", f"{instance_id}:{node_id}", {"role": role, "weight": weight})
     bump_revision(session, node_id, crypto)
+    _bump_hops(session, instance_id, crypto)
     return placement
+
+
+def create_hop_link(session: Session, hop_id, instance_id, crypto=None):
+    with _transaction(session):
+        hop = session.get(Node, hop_id)
+        if hop is None or hop.kind != "hop":
+            raise ValueError("hop link requires a hop node")
+        link = HopLink(hop_id=hop_id, instance_id=instance_id)
+        session.add(link)
+        session.flush()
+        _event(session, "hop_link.created", f"{hop_id}:{instance_id}")
+    bump_revision(session, hop_id, crypto)
+    return link
+
+
+def delete_hop_link(session: Session, hop_id, instance_id, crypto=None):
+    with _transaction(session):
+        link = session.scalar(select(HopLink).where(HopLink.hop_id == hop_id, HopLink.instance_id == instance_id))
+        if link is None:
+            return False
+        session.delete(link)
+        _event(session, "hop_link.deleted", f"{hop_id}:{instance_id}")
+    bump_revision(session, hop_id, crypto)
+    return True
+
+
+def switch_active(session: Session, instance_id, node_id, crypto=None):
+    with _transaction(session):
+        placements = session.scalars(select(Placement).where(Placement.instance_id == instance_id)).all()
+        target = next((p for p in placements if p.node_id == node_id), None)
+        if target is None:
+            raise ValueError("node has no placement for instance")
+        previous = sorted((p for p in placements if p.role == "active"), key=lambda p: (-p.weight, p.node_id))
+        old_node = session.get(Node, previous[0].node_id) if previous else None
+        for placement in placements:
+            placement.role = "active" if placement is target else "standby"
+        _event(session, "instance.switched", str(instance_id),
+               {"from": old_node.name if old_node else None, "to": session.get(Node, node_id).name})
+    for placement in placements:
+        bump_revision(session, placement.node_id, crypto)
+    _bump_hops(session, instance_id, crypto)
+    return target
 
 
 def add_peer(session: Session, instance_id, name, *, owner=None, crypto=None):
