@@ -55,6 +55,10 @@ internal/
 The agent supervises AWG daemons, reconciles interfaces and owned iptables rules, persists applied state, and retries boot reconciliation every 30 seconds. SIGINT/SIGTERM shuts down HTTP gracefully and then stops managed daemons.
 # Client (probe) mode
 
+The client keeper checks client peers every 10s and re-arms keepalive after 20s
+without a first handshake or 150s since the last handshake. Configure with
+`--keeper-interval` or disable with `--keeper-disable`.
+
 Client mode configures an interface as a synthetic probe peer. It adds no
 firewall rules; `listen_port: 0` lets the daemon choose a random port. Peer
 endpoints must use an IP literal (not a hostname). Use this mode for a

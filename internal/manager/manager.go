@@ -292,6 +292,16 @@ func (m *Manager) Applied() state.State {
 	return m.desired
 }
 
+// TryKeep runs fn only when no interface apply is in progress.
+func (m *Manager) TryKeep(fn func()) bool {
+	if !m.mu.TryLock() {
+		return false
+	}
+	defer m.mu.Unlock()
+	fn()
+	return true
+}
+
 // LiveSource adapts the configured device factory for metrics collection.
 type LiveSource struct{ Device DeviceFactory }
 

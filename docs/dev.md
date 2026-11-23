@@ -40,6 +40,8 @@ The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictH
 
 `make e2e-probe HOST=root@<test-host>` tests a client-mode peer handshake between two agents on one disposable host. It ships the image unless `E2E_SKIP_SHIP=1`; SSH options and protected container IDs can be set with `SSH_OPTS` and `E2E_PROTECTED_IDS`.
 
+`make e2e-orch-probe HOST=root@<test-host>` validates the synthetic probe end to end through a real hop, including path break/restore and event transitions. It creates uniquely named test resources and removes them on exit; run only on a disposable test host.
+
 ## Manual image delivery
 
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:

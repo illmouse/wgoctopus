@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from fake_agent import FakeAgent
 
+import wgoctopus_orch.push as push_module
 from wgoctopus_orch.config import Settings
 from wgoctopus_orch.models import Event, NodeObserved, NodeRevision
 from wgoctopus_orch.push import PushStatus, push_node
@@ -72,3 +73,50 @@ async def test_push_dangerous_allowed_disabled_and_errors(session, fake_agent, c
     await fake_agent.stop()
     assert (await push_node(session, node.id, transport=transport, crypto=crypto)).status == PushStatus.FAILED
     assert not session.get(NodeObserved, node.id).healthy
+
+
+@pytest.mark.asyncio
+async def test_push_adopts_remote_revision_without_observation(session, fake_agent, crypto):
+    node, _, _ = setup(session, fake_agent, crypto)
+    transport = DirectHttpTransport(Settings(transport="direct"), crypto=crypto)
+    assert (await push_node(session, node.id, transport=transport, crypto=crypto)).status == PushStatus.OK
+    revision = fake_agent.state["revision"]
+    fake_agent.requests.clear()
+    session.delete(session.get(NodeObserved, node.id))
+    session.flush()
+
+    outcome = await push_node(session, node.id, transport=transport, crypto=crypto)
+
+    observed = session.get(NodeObserved, node.id)
+    event = session.query(Event).filter_by(kind="push.ok").order_by(Event.id.desc()).first()
+    assert outcome.status == PushStatus.OK
+    assert event.data == {"revision": revision, "adopted": True}
+    assert observed.applied_revision == revision and observed.healthy
+    assert not any(request[0] == "PUT" for request in fake_agent.requests)
+
+
+@pytest.mark.asyncio
+async def test_push_adopts_remote_revision_after_record_failure(session, fake_agent, crypto, monkeypatch):
+    node, _, _ = setup(session, fake_agent, crypto)
+    transport = DirectHttpTransport(Settings(transport="direct"), crypto=crypto)
+    original_record = push_module._record
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("record failed")
+        return original_record(*args, **kwargs)
+
+    monkeypatch.setattr(push_module, "_record", fail_once)
+    with pytest.raises(RuntimeError, match="record failed"):
+        await push_node(session, node.id, transport=transport, crypto=crypto)
+    outcome = await push_node(session, node.id, transport=transport, crypto=crypto)
+
+    observed = session.get(NodeObserved, node.id)
+    event = session.query(Event).filter_by(kind="push.ok").one()
+    assert outcome.status == PushStatus.OK
+    assert event.data["adopted"] is True
+    assert observed.applied_revision == fake_agent.state["revision"] and observed.healthy
+    assert sum(request[0] == "PUT" for request in fake_agent.requests) == 1

@@ -38,10 +38,10 @@ type Forwarder struct {
 	flushedTotal, flushErrorsTotal, applyErrorsTotal, routes atomic.Int64
 }
 type Result struct {
-	Changed                      bool
-	RemovedRoutes, ChangedRoutes []int
-	Warnings                     []string
-	Flushed                      int
+	Changed                                   bool
+	AddedRoutes, RemovedRoutes, ChangedRoutes []int
+	Warnings                                  []string
+	Flushed                                   int
 }
 
 type Stats struct{ FlushedTotal, FlushErrorsTotal, ApplyErrorsTotal, Routes int64 }
@@ -185,10 +185,15 @@ func (f *Forwarder) Apply(ctx context.Context, h *state.Hop) (result Result, ret
 		f.lastHopIP = h.HopIP
 	}
 	ports := map[int]bool{}
-	for _, p := range append(result.ChangedRoutes, result.RemovedRoutes...) {
+	for _, p := range append(append(result.AddedRoutes, result.ChangedRoutes...), result.RemovedRoutes...) {
 		ports[p] = true
 	}
+	flushPorts := make([]int, 0, len(ports))
 	for p := range ports {
+		flushPorts = append(flushPorts, p)
+	}
+	sort.Ints(flushPorts)
+	for _, p := range flushPorts {
 		if f.deps.Conntrack == nil {
 			continue
 		}
@@ -355,6 +360,9 @@ func (f *Forwarder) applyRules(h *state.Hop, chains []struct{ table, name string
 			continue
 		}
 		if len(nw) > 0 {
+			if len(old) == 0 {
+				result.AddedRoutes = append(result.AddedRoutes, p)
+			}
 			for _, r := range nw {
 				if _, _, err := f.run(r.add()...); err != nil {
 					return result, err
@@ -373,6 +381,9 @@ func (f *Forwarder) applyRules(h *state.Hop, chains []struct{ table, name string
 		}
 		result.Changed = true
 	}
+	sort.Ints(result.AddedRoutes)
+	sort.Ints(result.ChangedRoutes)
+	sort.Ints(result.RemovedRoutes)
 	for _, j := range jumpRules(h) {
 		if err := f.ensureJump(j); err != nil {
 			return result, err

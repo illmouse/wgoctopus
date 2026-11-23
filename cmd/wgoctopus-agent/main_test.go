@@ -8,11 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/illmouse/wgoctopus/internal/state"
 )
 
 func TestParseConfig(t *testing.T) {
+	keeperCfg, err := parseConfig([]string{"--listen", "127.0.0.1:80", "--token", "x", "--keeper-interval", "17s", "--keeper-disable"}, func(string) string { return "" })
+	if err != nil || keeperCfg.KeeperInterval != 17*time.Second || !keeperCfg.KeeperDisable {
+		t.Fatalf("keeper flags: %+v, %v", keeperCfg, err)
+	}
 	getenv := func(k string) string {
 		if k == "WGOCTOPUS_TOKEN" {
 			return "from-env"

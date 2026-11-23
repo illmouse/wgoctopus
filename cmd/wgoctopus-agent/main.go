@@ -12,15 +12,18 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/illmouse/wgoctopus/internal/api"
 	"github.com/illmouse/wgoctopus/internal/daemon"
 	"github.com/illmouse/wgoctopus/internal/hop"
+	"github.com/illmouse/wgoctopus/internal/keeper"
 	"github.com/illmouse/wgoctopus/internal/manager"
 	"github.com/illmouse/wgoctopus/internal/netsetup"
 	"github.com/illmouse/wgoctopus/internal/store"
+	"github.com/illmouse/wgoctopus/internal/uapi"
 )
 
 var version = "dev"
@@ -36,6 +39,8 @@ type config struct {
 	StateDir, DaemonBin, SockDir, IPTablesBin, LogLevel       string
 	MetricsPublic, AllowPublicListen, ShowVersion, HopEnabled bool
 	ApplyTimeout                                              time.Duration
+	KeeperInterval                                            time.Duration
+	KeeperDisable                                             bool
 }
 
 func parseConfig(args []string, getenv func(string) string) (config, error) {
@@ -54,6 +59,8 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	fs.BoolVar(&c.AllowPublicListen, "allow-public-listen", false, "allow listening on all interfaces")
 	fs.StringVar(&c.LogLevel, "log-level", "info", "debug, info, warn, or error")
 	fs.DurationVar(&c.ApplyTimeout, "apply-timeout", 60*time.Second, "maximum time to wait for a state apply")
+	fs.DurationVar(&c.KeeperInterval, "keeper-interval", 10*time.Second, "client keeper polling interval")
+	fs.BoolVar(&c.KeeperDisable, "keeper-disable", false, "disable client keeper")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -130,6 +137,17 @@ func run(ctx context.Context, cfg config) error {
 	}
 	mgr.RegisterRestartHandler()
 	collector := mgr.Collector()
+	var keeperKicks atomic.Uint64
+	collector.KeeperKicks = keeperKicks.Load
+	if !cfg.KeeperDisable {
+		k := &keeper.Keeper{Source: mgr, Device: func(name string) keeper.Device {
+			if mgr.Device != nil {
+				return mgr.Device(name)
+			}
+			return uapi.Client{Socket: cfg.SockDir + "/" + name + ".sock"}
+		}, Interval: cfg.KeeperInterval, OnKick: func(string) { keeperKicks.Add(1) }}
+		go k.Run(ctx)
+	}
 	collector.Version = version
 	if cfg.HopEnabled {
 		collector.HopStats = mgr.HopStats

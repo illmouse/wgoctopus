@@ -59,6 +59,13 @@ async def push_node(session, node_id, *, transport, allow_dangerous=False, crypt
             return outcome
         if remote_revision > desired_revision:
             return PushOutcome(PushStatus.REVISION_AHEAD, desired_revision)
+        if remote_revision == desired_revision and not (observed and observed.applied_revision == desired_revision):
+            if observed is None:
+                observed = NodeObserved(node_id=node.id)
+                session.add(observed)
+            _record(session, node, observed, "push.ok", {"revision": desired_revision, "adopted": True},
+                    healthy=True, applied_revision=remote_revision, applied_checksum=remote_checksum)
+            return PushOutcome(PushStatus.OK, desired_revision)
         if remote_revision == desired_revision and observed and observed.applied_revision == desired_revision:
             if remote_checksum == observed.applied_checksum:
                 return PushOutcome(PushStatus.UP_TO_DATE, desired_revision)

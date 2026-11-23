@@ -7,6 +7,11 @@ rules. `listen_port: 0` lets the daemon choose a random port, and peer endpoints
 must be IP literals rather than hostnames. It is intended for synthetic probes
 orchestrated from the orchestrator.
 
+The client keeper periodically re-arms configured peers with persistent keepalive
+after 20 seconds without a first handshake or 150 seconds since the last one.
+It rate-limits re-arms to once per peer per 30 seconds. The default interval is
+10 seconds; `--keeper-interval` changes it and `--keeper-disable` turns it off.
+
 ## Components
 
 The agent accepts `--apply-timeout` (default `60s`) to bound how long its management API waits for a state apply; expired requests receive HTTP 504.
@@ -20,7 +25,7 @@ On shutdown, the agent stops managed daemons but leaves its owned iptables rules
 
 ### Hop mode
 
-**Implemented.** The agent-owned nat chains are `WGOCT_HOP_DNAT` and `WGOCT_HOP_SNAT`; the filter chain is `WGOCT_HOP_FWD`. Rules are tagged `wgoct:hop:<listen_port>`. Backend switch rewrites the DNAT rule and flushes conntrack entries for that listen port. Hop support is opt-in with `--hop-enabled`. IPv4 forwarding must already be enabled and the hop IP assigned to its WAN interface; the agent does not modify either. Changing `backend_ip` is normal failover and is not dangerous.
+**Implemented.** The agent-owned nat chains are `WGOCT_HOP_DNAT` and `WGOCT_HOP_SNAT`; the filter chain is `WGOCT_HOP_FWD`. Rules are tagged `wgoct:hop:<listen_port>`. Backend switch rewrites the DNAT rule and flushes conntrack entries for that listen port. Conntrack entries for added, changed and removed ports are flushed after the rules are applied, because flows created while the route was absent bypass NAT. Hop support is opt-in with `--hop-enabled`. IPv4 forwarding must already be enabled and the hop IP assigned to its WAN interface; the agent does not modify either. Changing `backend_ip` is normal failover and is not dangerous.
 
 Hop nodes use the same orchestrator push/reconcile path and `/v1/state` agent contract as AWG nodes, with empty `interfaces` and a `hop` section. Start their agent with `--hop-enabled`.
 
@@ -36,6 +41,8 @@ All nodes of one logical server share the same server keys, peers, and obfuscati
 ## Reconciliation
 
 The orchestrator periodically compares rendered desired state with each enabled agent and pushes revisions that are not applied. Unreachable nodes use exponential backoff starting at 5 seconds and capped at 300 seconds, with ±20% jitter. Dangerous changes require an explicit `apply_dangerous` action; revision-ahead, invalid, unauthorized, and dangerous responses are blocked and rechecked after 300 seconds. Events such as unreachable, recovered, and blocked are emitted only on state transitions. If the agent's checksum changes without a revision change, the orchestrator reports `node.drift` and does not auto-fix it. Reconciliation status and retry deadlines are memory-only and are lost on restart.
+
+If an agent already holds the desired revision but the orchestrator has no matching observation, reconciliation adopts that applied revision without sending another PUT.
 
 ## Failure modes
 

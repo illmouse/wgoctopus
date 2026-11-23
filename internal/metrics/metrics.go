@@ -22,6 +22,7 @@ type Collector struct {
 	Version         string
 	GoVersion       string
 	HopStats        func() hop.Stats
+	KeeperKicks     func() uint64
 }
 
 // Render returns metrics in Prometheus text exposition format 0.0.4.
@@ -38,6 +39,12 @@ func (c *Collector) Render(ctx context.Context) []byte {
 	metricHeader(&b, "wgoctopus_agent_applied_revision", "gauge", "Applied configuration revision.")
 	metricHeader(&b, "wgoctopus_agent_build_info", "gauge", "Build information.")
 	metricHeader(&b, "wgoctopus_daemon_restarts_total", "counter", "Daemon restarts for the interface.")
+	metricHeader(&b, "wgoctopus_keeper_kicks_total", "counter", "Client peer keepalive re-arms.")
+	if c.KeeperKicks != nil {
+		fmt.Fprintf(&b, "wgoctopus_keeper_kicks_total %d\n", c.KeeperKicks())
+	} else {
+		b.WriteString("wgoctopus_keeper_kicks_total 0\n")
+	}
 	if c.HopStats != nil {
 		metricHeader(&b, "wgoctopus_hop_routes", "gauge", "Configured hop routes.")
 		metricHeader(&b, "wgoctopus_hop_conntrack_flushed_total", "counter", "Conntrack entries flushed by hop reconciliation.")
