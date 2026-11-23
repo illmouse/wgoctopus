@@ -55,15 +55,22 @@ func (testLink) Exists(string) (bool, error)            { return false, nil }
 func (testLink) DefaultRouteInterface() (string, error) { return "eth0", nil }
 
 type testFirewall struct {
-	log *[]string
-	err error
+	log         *[]string
+	err         error
+	ensureCalls int
+	removeCalls []string
 }
 
-func (f testFirewall) Ensure(s netsetup.FirewallSpec) error {
+func (f *testFirewall) Ensure(s netsetup.FirewallSpec) error {
+	f.ensureCalls++
 	*f.log = append(*f.log, "firewall:"+s.Name+":"+s.ClientSubnet+":"+s.EgressIface+":"+s.SNATIP)
 	return f.err
 }
-func (f testFirewall) Remove(n string) error { *f.log = append(*f.log, "fwremove:"+n); return nil }
+func (f *testFirewall) Remove(n string) error {
+	*f.log = append(*f.log, "fwremove:"+n)
+	f.removeCalls = append(f.removeCalls, n)
+	return nil
+}
 
 type testDevice struct {
 	log    *[]string
@@ -119,7 +126,7 @@ func makeState(names ...string) state.State {
 func setup() (*Manager, *[]string, *testStore, map[string]*testDevice) {
 	log := new([]string)
 	devices := map[string]*testDevice{}
-	m := &Manager{Store: &testStore{log: log}, Daemons: &testSupervisor{log: log, restarts: map[string]uint64{}}, Links: testLink{log: log}, Firewall: testFirewall{log: log}, Device: func(n string) uapi.Device {
+	m := &Manager{Store: &testStore{log: log}, Daemons: &testSupervisor{log: log, restarts: map[string]uint64{}}, Links: testLink{log: log}, Firewall: &testFirewall{log: log}, Device: func(n string) uapi.Device {
 		if devices[n] == nil {
 			devices[n] = &testDevice{log: log, live: uapi.Live{Fields: map[string]string{}, Peers: map[string]uapi.Peer{}}}
 		}
@@ -148,6 +155,48 @@ func TestApplyOrderIdempotenceAndFirewall(t *testing.T) {
 	expectLog(t, log, "start:wg0", "link:wg0:10.0.0.1/24:1400", "get", "firewall:wg0:10.0.0.0/24:eth0:10.1.2.3", "save")
 	if s.saves != 2 || m.AppliedRevision() != 7 || m.Checksum() != v.Checksum() {
 		t.Fatalf("not recorded: saves=%d revision=%d", s.saves, m.AppliedRevision())
+	}
+}
+
+func TestClientModeSkipsFirewallAndReappliesWithoutUAPISet(t *testing.T) {
+	m, log, _, devices := setup()
+	v := makeState("wg0")
+	v.Interfaces[0].Mode = "client"
+	v.Interfaces[0].ListenPort = 0
+	fw := &testFirewall{log: log}
+	m.Firewall = fw
+	if err := m.Apply(v, true); err != nil {
+		t.Fatal(err)
+	}
+	if fw.ensureCalls != 0 || !reflect.DeepEqual(fw.removeCalls, []string{"wg0"}) {
+		t.Fatalf("firewall calls: ensure=%d remove=%v", fw.ensureCalls, fw.removeCalls)
+	}
+	if _, ok := devices["wg0"].live.Fields["listen_port"]; ok {
+		t.Fatal("client mode emitted listen_port")
+	}
+	*log = nil
+	if err := m.Apply(v, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(*log, ","), ",set,") {
+		t.Fatalf("idempotent reapply sent UAPI set: %v", *log)
+	}
+}
+
+func TestSwitchServerToClientRemovesFirewall(t *testing.T) {
+	m, log, _, _ := setup()
+	if err := m.Apply(makeState("wg0"), true); err != nil {
+		t.Fatal(err)
+	}
+	*log = nil
+	v := makeState("wg0")
+	v.Interfaces[0].Mode = "client"
+	v.Interfaces[0].ListenPort = 0
+	if err := m.Apply(v, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(*log, ","), "fwremove:wg0") || strings.Contains(strings.Join(*log, ","), "firewall:wg0") {
+		t.Fatalf("stale firewall rules not removed: %v", *log)
 	}
 }
 
@@ -393,6 +442,20 @@ func TestRestartRegistrationAndCollector(t *testing.T) {
 	collector = m.Collector()
 	if collector.Interfaces() != nil || collector.Restarts("wg0") != 0 {
 		t.Fatal("nil supervisor adapters")
+	}
+}
+
+func TestCollectorIncludesClientInterfaceAndPeerHandshake(t *testing.T) {
+	m, log, _, devices := setup()
+	m.Daemons.(*testSupervisor).names = []string{"probe0"}
+	devices["probe0"] = &testDevice{log: log, live: uapi.Live{Peers: map[string]uapi.Peer{
+		"peer-key": {PublicKey: "peer-key", LastHandshakeSec: 123},
+	}}}
+	out := string(m.Collector().Render(context.Background()))
+	for _, want := range []string{`wg_interface_up{interface="probe0"} 1`, `wg_peer_last_handshake_timestamp_seconds{interface="probe0",public_key="peer-key"} 123`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing metric %q", want)
+		}
 	}
 }
 

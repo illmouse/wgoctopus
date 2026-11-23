@@ -32,11 +32,13 @@ type Live struct {
 
 // PeerOp describes one peer mutation.
 type PeerOp struct {
-	PublicKey          string
-	Remove, UpdateOnly bool
-	PresharedKey       *string
-	ReplaceAllowedIPs  bool
-	AllowedIPs         []string
+	PublicKey           string
+	Remove, UpdateOnly  bool
+	PresharedKey        *string
+	Endpoint            *string
+	PersistentKeepalive *uint16
+	ReplaceAllowedIPs   bool
+	AllowedIPs          []string
 }
 
 // Ops describes a batch of interface and peer mutations.
@@ -170,6 +172,12 @@ func Serialize(o Ops) (string, error) {
 		}
 		if p.UpdateOnly {
 			b.WriteString("update_only=true\n")
+		}
+		if p.Endpoint != nil && *p.Endpoint != "" {
+			fmt.Fprintf(&b, "endpoint=%s\n", *p.Endpoint)
+		}
+		if p.PersistentKeepalive != nil {
+			fmt.Fprintf(&b, "persistent_keepalive_interval=%d\n", *p.PersistentKeepalive)
 		}
 		if p.PresharedKey != nil {
 			v := ""

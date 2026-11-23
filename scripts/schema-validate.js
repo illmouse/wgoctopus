@@ -27,9 +27,13 @@ for (const file of fs.readdirSync('schema/examples').filter((name) => name.endsW
 }
 const example = JSON.parse(fs.readFileSync('schema/examples/state.hop.example.json', 'utf8'));
 const interfaceExample = JSON.parse(fs.readFileSync('schema/examples/state.example.json', 'utf8'));
+const probeExample = JSON.parse(fs.readFileSync('schema/examples/state.probe.example.json', 'utf8'));
 const negative = [
   ['bad private key pattern', interfaceExample, (data) => { data.interfaces[0].private_key = 'invalid'; }],
   ['listen_port 70000', interfaceExample, (data) => { data.interfaces[0].listen_port = 70000; }],
+  ['mode bogus', interfaceExample, (data) => { data.interfaces[0].mode = 'bogus'; }],
+  ['persistent_keepalive 70000', probeExample, (data) => { data.interfaces[0].peers[0].persistent_keepalive = 70000; }],
+  ['server listen_port 0', interfaceExample, (data) => { data.interfaces[0].listen_port = 0; }],
   ['hop bad backend_ip', example, (data) => { data.hop.routes[0].backend_ip = 'not-an-ip'; }],
   ['hop route port 0', example, (data) => { data.hop.routes[0].listen_port = 0; }],
   ['hop missing wan_interface', example, (data) => { delete data.hop.wan_interface; }],

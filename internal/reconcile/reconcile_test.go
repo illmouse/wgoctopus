@@ -3,6 +3,7 @@ package reconcile
 import (
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,9 +43,78 @@ func (f *fakeDevice) Set(o uapi.Ops) error {
 		if p.ReplaceAllowedIPs {
 			old.AllowedIPs = p.AllowedIPs
 		}
+		if p.Endpoint != nil {
+			old.Endpoint = *p.Endpoint
+		}
+		if p.PersistentKeepalive != nil {
+			old.PersistentKeepalive = strconv.Itoa(int(*p.PersistentKeepalive))
+		}
 		f.live.Peers[p.PublicKey] = old
 	}
 	return nil
+}
+
+func TestEndpointAndKeepalivePlanning(t *testing.T) {
+	cases := []struct {
+		name          string
+		mode          string
+		peer          state.Peer
+		live          uapi.Peer
+		wantEndpoint  bool
+		wantKeepalive bool
+	}{
+		{name: "new peer values", peer: state.Peer{PublicKey: testKey, Endpoint: "192.0.2.1:51820", PersistentKeepalive: 25}, wantEndpoint: true, wantKeepalive: true},
+		{name: "endpoint change", peer: state.Peer{PublicKey: testKey, Endpoint: "192.0.2.2:51820"}, live: uapi.Peer{Endpoint: "192.0.2.1:51820"}, wantEndpoint: true},
+		{name: "identical", peer: state.Peer{PublicKey: testKey, Endpoint: "192.0.2.1:51820", PersistentKeepalive: 25}, live: uapi.Peer{Endpoint: "192.0.2.1:51820", PersistentKeepalive: "25"}},
+		{name: "empty endpoint preserves roaming", peer: state.Peer{PublicKey: testKey}, live: uapi.Peer{Endpoint: "192.0.2.1:51820"}},
+		{name: "IPv6 endpoint normalized", peer: state.Peer{PublicKey: testKey, Endpoint: "[2001:db8::1]:51820"}, live: uapi.Peer{Endpoint: "[2001:0db8:0:0::1]:51820"}},
+		{name: "keepalive difference", peer: state.Peer{PublicKey: testKey, PersistentKeepalive: 25}, live: uapi.Peer{PersistentKeepalive: "10"}, wantKeepalive: true},
+		{name: "client disables keepalive", mode: "client", peer: state.Peer{PublicKey: testKey}, live: uapi.Peer{PersistentKeepalive: "25"}, wantKeepalive: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := desired(tc.peer)
+			w.Mode = tc.mode
+			live := uapi.Live{PrivateKey: liveKey(), Fields: map[string]string{"private_key": liveKey(), "listen_port": "51820", "h1": "1", "h2": "2", "h3": "3", "h4": "4"}, Peers: map[string]uapi.Peer{}}
+			if tc.live.Endpoint != "" || tc.live.PersistentKeepalive != "" {
+				tc.live.PublicKey = testKey
+				live.Peers[testKey] = tc.live
+			}
+			p := Plan(w, live)
+			if (len(p.Ops.Peers) > 0) != (tc.wantEndpoint || tc.wantKeepalive || tc.name == "new peer values") {
+				t.Fatalf("unexpected operations: %#v", p.Ops.Peers)
+			}
+			if len(p.Ops.Peers) != 0 && (tc.wantEndpoint != (p.Ops.Peers[0].Endpoint != nil) || tc.wantKeepalive != (p.Ops.Peers[0].PersistentKeepalive != nil)) {
+				t.Fatalf("unexpected peer mutation: %#v", p.Ops.Peers[0])
+			}
+		})
+	}
+}
+
+func TestClientRandomListenPortAndServerPortDanger(t *testing.T) {
+	live := uapi.Live{PrivateKey: liveKey(), Fields: map[string]string{"private_key": liveKey(), "listen_port": "49152", "h1": "1", "h2": "2", "h3": "3", "h4": "4"}, Peers: map[string]uapi.Peer{}}
+	w := desired()
+	w.ListenPort, w.Mode = 0, "client"
+	p := Plan(w, live)
+	if _, ok := p.Ops.Fields["listen_port"]; ok || len(p.Dangerous) != 0 {
+		t.Fatalf("client random port should be untouched: %#v", p)
+	}
+	w.Mode, w.ListenPort = "", 51821
+	p = Plan(w, live)
+	if p.Ops.Fields["listen_port"] != "51821" || len(p.Dangerous) != 1 || p.Dangerous[0] != "listen_port" {
+		t.Fatalf("server port change should be dangerous: %#v", p)
+	}
+}
+
+func TestApplyEndpointKeepaliveIsIdempotent(t *testing.T) {
+	w := desired(state.Peer{PublicKey: testKey, Endpoint: "192.0.2.1:51820", PersistentKeepalive: 25})
+	f := &fakeDevice{live: uapi.Live{PrivateKey: liveKey(), Fields: map[string]string{"private_key": liveKey(), "listen_port": "51820", "h1": "1", "h2": "2", "h3": "3", "h4": "4"}, Peers: map[string]uapi.Peer{}}}
+	if err := Apply(f, w, false); err != nil {
+		t.Fatal(err)
+	}
+	if p := Plan(w, f.live); len(p.Ops.Peers) != 0 {
+		t.Fatalf("plan after apply is not empty: %#v", p)
+	}
 }
 
 func desired(peers ...state.Peer) state.Interface {

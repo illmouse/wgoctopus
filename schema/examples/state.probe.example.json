@@ -1,0 +1,21 @@
+{
+  "revision": 1,
+  "interfaces": [{
+    "name": "probe1",
+    "mode": "client",
+    "listen_port": 0,
+    "private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "address": "10.8.0.2/32",
+    "obfuscation": {
+      "jc": 0, "jmin": 0, "jmax": 0,
+      "s1": 0, "s2": 0, "s3": 0, "s4": 0,
+      "h1": "1", "h2": "2", "h3": "3", "h4": "4"
+    },
+    "peers": [{
+      "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "endpoint": "192.0.2.10:13440",
+      "persistent_keepalive": 5,
+      "allowed_ips": ["10.8.0.1/32"]
+    }]
+  }]
+}

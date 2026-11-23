@@ -24,6 +24,7 @@ func (State) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 type Interface struct {
 	Name            string      `json:"name"`
+	Mode            string      `json:"mode,omitempty"`
 	ListenPort      uint16      `json:"listen_port"`
 	PrivateKey      string      `json:"private_key"`
 	Address         string      `json:"address"`
@@ -56,9 +57,11 @@ type Obfuscation struct {
 	I5   string `json:"i5,omitempty"`
 }
 type Peer struct {
-	PublicKey    string   `json:"public_key"`
-	PresharedKey string   `json:"preshared_key,omitempty"`
-	AllowedIPs   []string `json:"allowed_ips"`
+	PublicKey           string   `json:"public_key"`
+	PresharedKey        string   `json:"preshared_key,omitempty"`
+	AllowedIPs          []string `json:"allowed_ips"`
+	Endpoint            string   `json:"endpoint,omitempty"`
+	PersistentKeepalive uint16   `json:"persistent_keepalive,omitempty"`
 }
 
 type Hop struct {
@@ -90,7 +93,10 @@ func (s State) Validate() error {
 			return fmt.Errorf("invalid or duplicate interface name %q", in.Name)
 		}
 		names[in.Name] = true
-		if in.ListenPort == 0 {
+		if in.Mode != "" && in.Mode != "client" {
+			return fmt.Errorf("interface %s: mode must be empty or client", in.Name)
+		}
+		if in.ListenPort == 0 && in.Mode != "client" {
 			return fmt.Errorf("interface %s: listen_port must be 1..65535", in.Name)
 		}
 		ports[in.ListenPort] = true
@@ -161,6 +167,12 @@ func (s State) Validate() error {
 			if p.PresharedKey != "" {
 				if err := key(p.PresharedKey); err != nil {
 					return fmt.Errorf("peer preshared_key: %w", err)
+				}
+			}
+			if p.Endpoint != "" {
+				endpoint, err := netip.ParseAddrPort(p.Endpoint)
+				if err != nil || endpoint.Port() == 0 {
+					return fmt.Errorf("peer endpoint must be an IP literal host:port with port 1..65535")
 				}
 			}
 			if len(p.AllowedIPs) == 0 {

@@ -43,7 +43,8 @@
       "required": ["name", "listen_port", "private_key", "address", "obfuscation", "peers"],
       "properties": {
         "name": {"type": "string", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9_=+.-]+$", "description": "Must be unique among interfaces on this node."},
-        "listen_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "mode": {"type": "string", "enum": ["client"], "description": "Omit for server mode; client enables an ephemeral listen port."},
+        "listen_port": {"type": "integer", "minimum": 0, "maximum": 65535, "description": "Port 0 is allowed only when mode is client."},
         "private_key": {"$ref": "#/$defs/key"},
         "address": {"$ref": "#/$defs/cidr"},
         "mtu": {"type":"integer","minimum":576,"maximum":9000},
@@ -55,7 +56,8 @@
           "items": {"$ref": "#/$defs/peer"},
           "description": "Peer public_key values must be unique; JSON Schema cannot enforce uniqueness by a property."
         }
-      }
+      },
+      "allOf": [{"if": {"properties": {"mode": {"const": "client"}}, "required": ["mode"]}, "then": {}, "else": {"properties": {"listen_port": {"minimum": 1}}}}]
     },
     "obfuscation": {
       "type": "object",
@@ -81,7 +83,9 @@
       "properties": {
         "public_key": {"$ref": "#/$defs/key"},
         "preshared_key": {"$ref": "#/$defs/key"},
-        "allowed_ips": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/cidr"}}
+        "allowed_ips": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/cidr"}},
+        "endpoint": {"type": "string", "description": "Optional IP-literal host:port endpoint (IPv4 or bracketed IPv6); hostnames are not allowed."},
+        "persistent_keepalive": {"type": "integer", "minimum": 0, "maximum": 65535, "description": "Keepalive interval in seconds; 0 disables it."}
       }
     }
   }

@@ -40,11 +40,14 @@ func Plan(w state.Interface, l uapi.Live) PlanResult {
 	r := PlanResult{Ops: uapi.Ops{Fields: map[string]string{}}}
 	newInterface := l.PrivateKey == ""
 	fields := map[string]string{
-		"private_key": normalizePrivateKey(w.PrivateKey), "listen_port": strconv.Itoa(int(w.ListenPort)),
-		"jc": strconv.FormatUint(uint64(w.Obfuscation.JC), 10), "jmin": strconv.FormatUint(uint64(w.Obfuscation.JMin), 10), "jmax": strconv.FormatUint(uint64(w.Obfuscation.JMax), 10),
+		"private_key": normalizePrivateKey(w.PrivateKey),
+		"jc":          strconv.FormatUint(uint64(w.Obfuscation.JC), 10), "jmin": strconv.FormatUint(uint64(w.Obfuscation.JMin), 10), "jmax": strconv.FormatUint(uint64(w.Obfuscation.JMax), 10),
 		"s1": strconv.Itoa(int(w.Obfuscation.S1)), "s2": strconv.Itoa(int(w.Obfuscation.S2)), "s3": strconv.Itoa(int(w.Obfuscation.S3)), "s4": strconv.Itoa(int(w.Obfuscation.S4)),
 		"h1": w.Obfuscation.H1, "h2": w.Obfuscation.H2, "h3": w.Obfuscation.H3, "h4": w.Obfuscation.H4,
 		"i1": w.Obfuscation.I1, "i2": w.Obfuscation.I2, "i3": w.Obfuscation.I3, "i4": w.Obfuscation.I4, "i5": w.Obfuscation.I5,
+	}
+	if w.ListenPort != 0 || w.Mode != "client" {
+		fields["listen_port"] = strconv.Itoa(int(w.ListenPort))
 	}
 	defaults := map[string]string{"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0", "s3": "0", "s4": "0", "h1": "0", "h2": "0", "h3": "0", "h4": "0", "i1": "", "i2": "", "i3": "", "i4": "", "i5": ""}
 	for k, v := range fields {
@@ -88,6 +91,14 @@ func Plan(w state.Interface, l uapi.Live) PlanResult {
 		if !ok {
 			op.ReplaceAllowedIPs = true
 			op.AllowedIPs = canonical(p.AllowedIPs)
+			if p.Endpoint != "" {
+				v := p.Endpoint
+				op.Endpoint = &v
+			}
+			if p.PersistentKeepalive > 0 {
+				v := p.PersistentKeepalive
+				op.PersistentKeepalive = &v
+			}
 			r.Ops.Peers = append(r.Ops.Peers, op)
 			continue
 		}
@@ -100,12 +111,37 @@ func Plan(w state.Interface, l uapi.Live) PlanResult {
 			op.ReplaceAllowedIPs = true
 			op.AllowedIPs = canonical(p.AllowedIPs)
 		}
-		if op.PresharedKey != nil || op.ReplaceAllowedIPs {
+		if p.Endpoint != "" && !sameEndpoint(old.Endpoint, p.Endpoint) {
+			v := p.Endpoint
+			op.Endpoint = &v
+		}
+		if (p.PersistentKeepalive != 0 || w.Mode == "client") && parseKeepalive(old.PersistentKeepalive) != p.PersistentKeepalive {
+			v := p.PersistentKeepalive
+			op.PersistentKeepalive = &v
+		}
+		if op.PresharedKey != nil || op.ReplaceAllowedIPs || op.Endpoint != nil || op.PersistentKeepalive != nil {
 			r.Ops.Peers = append(r.Ops.Peers, op)
 		}
 	}
 	sort.Strings(r.Dangerous)
 	return r
+}
+
+func sameEndpoint(a, b string) bool {
+	x, errX := netip.ParseAddrPort(a)
+	y, errY := netip.ParseAddrPort(b)
+	return errX == nil && errY == nil && x == y
+}
+
+func parseKeepalive(s string) uint16 {
+	if s == "" || s == "off" {
+		return 0
+	}
+	n, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		return 0
+	}
+	return uint16(n)
 }
 
 // Apply plans and applies changes, refusing dangerous changes unless acknowledged.

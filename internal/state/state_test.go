@@ -85,6 +85,59 @@ func TestOmittedNetworkFieldsPreserveChecksum(t *testing.T) {
 	}
 }
 
+func TestClientModeContract(t *testing.T) {
+	b, err := os.ReadFile("../../schema/examples/state.probe.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var valid State
+	if err := json.Unmarshal(b, &valid); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		edit    func(*State)
+		wantErr bool
+	}{
+		{"client zero port endpoint and keepalive", func(*State) {}, false},
+		{"server zero port", func(s *State) { s.Interfaces[0].Mode = "" }, true},
+		{"bogus mode", func(s *State) { s.Interfaces[0].Mode = "bogus" }, true},
+		{"hostname endpoint", func(s *State) { s.Interfaces[0].Peers[0].Endpoint = "example.com:1234" }, true},
+		{"zero endpoint port", func(s *State) { s.Interfaces[0].Peers[0].Endpoint = "192.0.2.10:0" }, true},
+		{"IPv6 endpoint", func(s *State) { s.Interfaces[0].Peers[0].Endpoint = "[2001:db8::1]:13440" }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := valid
+			s.Interfaces = append([]Interface(nil), valid.Interfaces...)
+			s.Interfaces[0].Peers = append([]Peer(nil), valid.Interfaces[0].Peers...)
+			tc.edit(&s)
+			err := s.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestZeroValueClientFieldsPreserveChecksum(t *testing.T) {
+	b, err := os.ReadFile("../../schema/examples/state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s State
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	before := s.Checksum()
+	s.Interfaces[0].Mode = ""
+	s.Interfaces[0].Peers[0].Endpoint = ""
+	s.Interfaces[0].Peers[0].PersistentKeepalive = 0
+	if got := s.Checksum(); got != before {
+		t.Fatalf("zero-value client fields changed checksum: got %s want %s", got, before)
+	}
+}
+
 func TestRejectsInvalidHeaderRanges(t *testing.T) {
 	b, err := os.ReadFile("../../schema/examples/state.example.json")
 	if err != nil {

@@ -7,7 +7,8 @@ The normative JSON shape is [`schema/state.schema.json`](../schema/state.schema.
 - `revision` — non-negative integer assigned by the orchestrator. A node applies a newer revision atomically as far as practical; a repeated revision with identical content is an idempotent no-op. A stale revision must not roll back newer applied state. The agent reports the applied revision and a checksum of canonical applied state.
 - `interfaces` — complete desired interface set for the node. Interfaces omitted from a later state are candidates for removal.
 - `interfaces[].name` — device/interface name; must be unique within the array.
-- `listen_port` — UDP listen port, 1–65535.
+- `mode` — optional interface mode. Omit for server mode; `client` selects client mode.
+- `listen_port` — UDP listen port, 1–65535. Port `0` is allowed only in client mode and lets the daemon choose a random port.
 - `private_key` — base64 encoding of exactly 32 key bytes; secret.
 - `address` — interface address in CIDR notation.
 - `mtu` — optional link MTU (576–9000); omitted or zero uses the default.
@@ -16,6 +17,8 @@ The normative JSON shape is [`schema/state.schema.json`](../schema/state.schema.
 - `obfuscation` — required AWG parameters: `jc`, `jmin`, `jmax`, `s1`–`s4`, and `h1`–`h4`; optional `i1`–`i5` strings. H fields are decimal strings or inclusive `min-max` ranges (for example `100-200`), as required by AWG 3.1 UAPI; S fields are 16-bit unsigned values.
 - `peers` — complete desired peer set for this interface. `public_key` must be unique within the array; schema-level uniqueness of an object property is not expressible in JSON Schema.
 - `peers[].public_key` — base64 encoding of exactly 32 key bytes.
+- `peers[].endpoint` — optional IP-literal endpoint in host:port form (IPv4 or bracketed IPv6); hostnames are not allowed.
+- `peers[].persistent_keepalive` — optional keepalive interval in seconds, 0–65535; zero disables keepalive.
 - `peers[].preshared_key` — optional base64 encoding of exactly 32 key bytes; secret.
 - `peers[].allowed_ips` — non-empty list of CIDR ranges routed through the peer.
 - Obfuscation values are authoritative: omitted optional `i1`–`i5` values and zero-valued numeric fields reset the device field to its default/zero; they do not mean “leave unchanged.” Missing obfuscation values in a device snapshot are treated as defaults.

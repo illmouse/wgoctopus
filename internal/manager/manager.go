@@ -189,6 +189,9 @@ func (m *Manager) applyInterface(ctx context.Context, in state.Interface, allow 
 		return err
 	}
 	if m.Firewall != nil {
+		if in.Mode == "client" {
+			return m.Firewall.Remove(in.Name)
+		}
 		prefix, err := netip.ParsePrefix(in.Address)
 		if err != nil {
 			return err

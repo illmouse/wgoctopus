@@ -54,6 +54,24 @@ func TestSerializeKeyAndPeerRemoval(t *testing.T) {
 	}
 }
 
+func TestSerializePeerEndpointAndKeepalive(t *testing.T) {
+	key := "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+	endpoint, keepalive := "192.0.2.1:51820", uint16(25)
+	got, err := Serialize(Ops{Peers: []PeerOp{{PublicKey: key, Endpoint: &endpoint, PersistentKeepalive: &keepalive}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "public_key=" + strings.Repeat("01", 32) + "\nendpoint=192.0.2.1:51820\npersistent_keepalive_interval=25\n\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	keepalive = 0
+	got, err = Serialize(Ops{Peers: []PeerOp{{PublicKey: key, Endpoint: ptr(""), PersistentKeepalive: &keepalive}}})
+	if err != nil || strings.Contains(got, "endpoint=\n") || !strings.Contains(got, "persistent_keepalive_interval=0\n") {
+		t.Fatalf("zero keepalive/empty endpoint serialization: %q, %v", got, err)
+	}
+}
+
 func ptr(s string) *string { return &s }
 
 func TestParseErrorsAndInvalidLines(t *testing.T) {

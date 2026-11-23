@@ -1,5 +1,12 @@
 # Architecture
 
+## Client (probe) mode
+
+Client mode configures a synthetic probe interface and installs no firewall
+rules. `listen_port: 0` lets the daemon choose a random port, and peer endpoints
+must be IP literals rather than hostnames. It is intended for synthetic probes
+orchestrated from the orchestrator.
+
 ## Components
 
 The agent accepts `--apply-timeout` (default `60s`) to bound how long its management API waits for a state apply; expired requests receive HTTP 504.
