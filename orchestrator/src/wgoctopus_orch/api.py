@@ -8,6 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -156,7 +157,7 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
@@ -182,7 +183,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 alert_settings.telegram_token, alert_settings.telegram_chat_id,
                 api_base=alert_settings.telegram_api_base), delay_seconds=alert_settings.alert_delay_seconds,
                 max_per_minute=alert_settings.alert_max_per_minute, poll_seconds=alert_settings.alert_poll_seconds,
-                kinds=alert_settings.alert_kinds)
+                kinds=alert_settings.alert_kinds, buttons_enabled=alert_settings.telegram_buttons_enabled)
         else:
             app.state.alerts = None
         stop = __import__("asyncio").Event()
@@ -203,7 +204,24 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 except TimeoutError:
                     pass
         failover_task = asyncio.create_task(failover_loop()) if app.state.failover else None
+        if bot is not None:
+            app.state.telegram_bot = bot
+        elif alert_settings.telegram_buttons_enabled and app.state.failover:
+            from .telegram_bot import TelegramBot
+            app.state.telegram_bot = TelegramBot(alert_settings.telegram_token, alert_settings.telegram_chat_id,
+                alert_settings.telegram_api_base, httpx.AsyncClient(timeout=alert_settings.telegram_poll_timeout + 5),
+                app.state.failover, sessions, alert_settings.telegram_allowed_user_ids, alert_settings.telegram_poll_timeout)
+        else:
+            app.state.telegram_bot = None
+        bot_task = asyncio.create_task(app.state.telegram_bot.run()) if app.state.telegram_bot else None
         yield
+        if bot_task:
+            bot_task.cancel()
+            try:
+                await bot_task
+            except asyncio.CancelledError:
+                pass
+            await app.state.telegram_bot.client.aclose()
         if failover_task:
             stop.set()
             await failover_task
@@ -224,6 +242,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     app.state.crypto = cipher
     app.state.reconciler = reconciler
     app.state.alerts = alerts
+    app.state.telegram_bot = bot
     token = _token()
     allow_no_auth = os.getenv("WGOCTOPUS_API_ALLOW_NO_AUTH", "false").lower() == "true"
     if not token and not allow_no_auth:
@@ -249,12 +268,12 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/metrics", response_class=Response)
     def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):
-        return Response(render_metrics(s, app.state.reconciler, alerts=app.state.alerts), media_type="text/plain; version=0.0.4; charset=utf-8")
+        return Response(render_metrics(s, app.state.reconciler, alerts=app.state.alerts, bot=app.state.telegram_bot), media_type="text/plain; version=0.0.4; charset=utf-8")
 
     @app.get("/v1/alerts", dependencies=[Depends(auth)])
     def alerts_status():
         dispatcher = app.state.alerts
-        return {"enabled": dispatcher is not None, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
+        return {"enabled": dispatcher is not None, "buttons_enabled": alert_settings.telegram_buttons_enabled, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
 
     @app.post("/v1/alerts/test", status_code=202, dependencies=[Depends(auth)])
     async def alert_test():

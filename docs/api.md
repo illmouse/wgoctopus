@@ -70,3 +70,6 @@ curl -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
 ## Probes
 
 Create a synthetic client with `POST /v1/probes` and `{ "hop_id": 1, "instance_id": 1, "runner_node_id": 2 }`. The runner must be an enabled AWG node, distinct from the instance's active node; the hop must have a hop IP and be linked to the instance. The API returns probe metadata and its `wgp<id>` interface name, never peer keys or addresses. List probes with optional `hop_id`, `instance_id`, and `runner_node_id` filters; retrieve or delete by id. Deletion removes the interface and managed peer. The system-owned peer uses the reserved owner `__probe__`; it is excluded from normal peer endpoints, counts, and peer metrics, and cannot be managed through peer endpoints. In general, choose a runner other than the active instance node.
+# Telegram failover callbacks
+
+`GET /v1/alerts` includes `buttons_enabled`. When enabled, `failover.proposed` messages include Telegram Confirm/Reject buttons; the existing authenticated API decision endpoints remain available.

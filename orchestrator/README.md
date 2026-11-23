@@ -56,3 +56,10 @@ Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPU
 | `WGOCTOPUS_CLIENT_ENDPOINT_HOST` | unset | Default client config endpoint |
 
 Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
+# Telegram callback environment
+
+| Variable | Default | Description |
+|---|---:|---|
+| `WGOCTOPUS_TELEGRAM_BUTTONS` | `auto` | `auto`, `true`, or `false`; auto requires alerts and a non-empty user allowlist. |
+| `WGOCTOPUS_TELEGRAM_ALLOWED_USER_IDS` | empty | Comma-separated Telegram numeric user IDs. Empty disables callbacks; required when buttons are true. |
+| `WGOCTOPUS_TELEGRAM_POLL_TIMEOUT` | `25` | Long-poll timeout in seconds. |

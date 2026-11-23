@@ -22,7 +22,7 @@ class FakeNotifier:
 
 def test_alert_endpoints(api, caplog):
     client, sessions, _reconciler, crypto = api
-    assert client.get("/v1/alerts").json() == {"enabled": False, "counters": {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
+    assert client.get("/v1/alerts").json() == {"enabled": False, "buttons_enabled": False, "counters": {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
     assert client.post("/v1/alerts/test").status_code == 409
     client.headers.pop("Authorization")
     assert client.get("/v1/alerts").status_code == 401

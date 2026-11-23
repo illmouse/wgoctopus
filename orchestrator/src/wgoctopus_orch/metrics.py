@@ -25,7 +25,7 @@ def escape_label(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None, failover=None) -> str:
+def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None, failover=None, bot=None) -> str:
     lines = []
 
     def sample(name, labels, value):
@@ -54,6 +54,11 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None,
     sample("wgoctopus_failover_pending", {}, proposal_counts.get("pending", 0))
     for metric, key in (("wgoctopus_alerts_sent_total", "sent"), ("wgoctopus_alerts_failed_total", "failed"), ("wgoctopus_alerts_dropped_total", "dropped"), ("wgoctopus_alerts_pending", "pending")):
         sample(metric, {}, alert_counts.get(key, 0))
+    family("wgoctopus_telegram_callbacks_total", "counter", "Telegram failover callback outcomes.")
+    for result in ("ok", "denied", "invalid", "rejected_by_engine", "error"):
+        sample("wgoctopus_telegram_callbacks_total", {"result": result}, (bot.results if bot else {}).get(result, 0))
+    family("wgoctopus_telegram_bot_enabled", "gauge", "Whether the Telegram callback bot is enabled.")
+    sample("wgoctopus_telegram_bot_enabled", {}, int(bot is not None))
 
     family("wgoctopus_build_info", "gauge", "Orchestrator build information.")
     sample("wgoctopus_build_info", {"version": version}, 1)

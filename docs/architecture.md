@@ -84,3 +84,6 @@ The alert dispatcher reads persisted events and delivers plain-text Telegram not
 | `WGOCTOPUS_ALERT_MAX_PER_MINUTE` | `20` | Delivery limit |
 | `WGOCTOPUS_ALERT_POLL_SECONDS` | `5` | Event polling interval |
 | `WGOCTOPUS_ALERT_KINDS` | empty | Optional comma-separated event kinds |
+# Telegram failover confirmation
+
+The orchestrator can attach Confirm/Reject inline buttons to failover proposals. A long-polling `getUpdates` client accepts callbacks only from configured Telegram user IDs and only in the configured chat. Updates are persisted in `alert_state` to avoid replay after restart. This is outbound-only; configure no Telegram webhook, and run only one orchestrator instance per bot token because Telegram does not support concurrent pollers reliably. Callback decisions use the same failover engine as the API.

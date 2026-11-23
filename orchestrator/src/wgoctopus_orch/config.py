@@ -48,6 +48,13 @@ class Settings:
     failover_proposal_ttl_seconds: float = 900
     failover_cooldown_seconds: float = 600
     failover_eval_interval: float = 15
+    telegram_buttons: bool = False
+    telegram_allowed_user_ids: tuple[int, ...] = ()
+    telegram_poll_timeout: int = 25
+
+    @property
+    def telegram_buttons_enabled(self):
+        return self.telegram_buttons and self.alerts_enabled and bool(self.telegram_allowed_user_ids)
 
     @classmethod
     def from_env(cls):
@@ -76,7 +83,19 @@ class Settings:
         unknown = set(kinds or ()) - RULES.keys()
         if unknown:
             raise ValueError(f"unknown alert kinds: {', '.join(sorted(unknown))}")
-        return cls(transport, os.getenv("WGOCTOPUS_SSH_KEY_FILE"),
+        allowed_text = os.getenv("WGOCTOPUS_TELEGRAM_ALLOWED_USER_IDS", "")
+        try:
+            allowed_ids = tuple(int(value.strip()) for value in allowed_text.split(",") if value.strip())
+        except ValueError as exc:
+            raise ValueError("WGOCTOPUS_TELEGRAM_ALLOWED_USER_IDS must be comma-separated integers") from exc
+        buttons = os.getenv("WGOCTOPUS_TELEGRAM_BUTTONS", "auto").lower()
+        if buttons not in {"auto", "true", "false"}:
+            raise ValueError("WGOCTOPUS_TELEGRAM_BUTTONS must be auto, true, or false")
+        alerts_enabled = alerts == "true" or (alerts == "auto" and bool(token and chat_id))
+        if buttons == "true" and not allowed_ids:
+            raise ValueError("WGOCTOPUS_TELEGRAM_BUTTONS=true requires allowed user IDs")
+        poll_timeout = int(os.getenv("WGOCTOPUS_TELEGRAM_POLL_TIMEOUT", "25"))
+        settings = cls(transport, os.getenv("WGOCTOPUS_SSH_KEY_FILE"),
                    os.getenv("WGOCTOPUS_SSH_KEY_PASSPHRASE_FILE"),
                    os.getenv("WGOCTOPUS_SSH_KNOWN_HOSTS"),
                    os.getenv("WGOCTOPUS_SSH_TOFU", "false").lower() == "true",
@@ -93,7 +112,7 @@ class Settings:
                    float(os.getenv("WGOCTOPUS_PROBE_STALE_SECONDS", "180")),
                    float(os.getenv("WGOCTOPUS_PROBE_GRACE_SECONDS", "60")), token, chat_id,
                    os.getenv("WGOCTOPUS_TELEGRAM_API_BASE", "https://api.telegram.org"),
-                   alerts == "true" or (alerts == "auto" and bool(token and chat_id)),
+                    alerts_enabled,
                    float(os.getenv("WGOCTOPUS_ALERT_DELAY_SECONDS", "60")),
                    int(os.getenv("WGOCTOPUS_ALERT_MAX_PER_MINUTE", "20")),
                    float(os.getenv("WGOCTOPUS_ALERT_POLL_SECONDS", "5")), kinds,
@@ -101,4 +120,7 @@ class Settings:
                    float(os.getenv("WGOCTOPUS_FAILOVER_DOWN_SECONDS", "120")),
                    float(os.getenv("WGOCTOPUS_FAILOVER_PROPOSAL_TTL", "900")),
                    float(os.getenv("WGOCTOPUS_FAILOVER_COOLDOWN", "600")),
-                   float(os.getenv("WGOCTOPUS_FAILOVER_EVAL_INTERVAL", "15")))
+                    float(os.getenv("WGOCTOPUS_FAILOVER_EVAL_INTERVAL", "15")),
+                    buttons == "true" or (buttons == "auto" and alerts_enabled and bool(allowed_ids)),
+                    allowed_ids, poll_timeout)
+        return settings

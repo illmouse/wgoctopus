@@ -33,9 +33,11 @@ class TelegramNotifier:
 
     __str__ = __repr__
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, *, buttons: list[list[tuple[str, str]]] | None = None) -> None:
         url = f"{self.api_base}/bot{self._token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": text[:4000], "disable_web_page_preview": True}
+        if buttons:
+            payload["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in row] for row in buttons]}
         try:
             if self.client is None:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -63,7 +65,7 @@ class TelegramNotifier:
 
 
 class Notifier(Protocol):
-    async def send(self, text: str) -> None: ...
+    async def send(self, text: str, *, buttons: list[list[tuple[str, str]]] | None = None) -> None: ...
 
 
 RULES = {
@@ -81,10 +83,11 @@ DOWN = {"node.unreachable": "node.recovered", "probe.down": "probe.up"}
 
 class AlertDispatcher:
     def __init__(self, session_factory, notifier, *, delay_seconds=60, max_per_minute=20,
-                 poll_seconds=5, kinds=None, clock=time.monotonic):
+                 poll_seconds=5, kinds=None, clock=time.monotonic, buttons_enabled=False):
         self.session_factory, self.notifier = session_factory, notifier
         self.delay_seconds, self.max_per_minute = delay_seconds, max_per_minute
         self.poll_seconds, self.kinds, self.clock = poll_seconds, kinds, clock
+        self.buttons_enabled = buttons_enabled
         self._retry_at, self._failures = 0.0, 0
         self._sent_times, self._overflow = deque(), []
         self._overflow_since = None
@@ -128,6 +131,8 @@ class AlertDispatcher:
                     detail = f" #{proposal.id}: {before.name if before else proposal.from_node_id} to {after.name if after else proposal.to_node_id}; expires {proposal.expires_at.isoformat()}"
                     if proposal.mode_at_creation == "confirm":
                         detail += f"; confirm via API: POST /v1/failovers/{proposal.id}/confirm"
+                    if self.buttons_enabled:
+                        detail += "; confirm or reject using the buttons below"
         if event.kind == "node.blocked" and isinstance(data.get("kind"), str):
             detail = f" ({data['kind']})"
         elif event.kind == "instance.switched":
@@ -136,9 +141,12 @@ class AlertDispatcher:
                 detail = f" {before} to {after}"
         return subject, detail
 
-    async def _deliver(self, text):
+    async def _deliver(self, text, buttons=None):
         try:
-            await self.notifier.send(text)
+            if buttons:
+                await self.notifier.send(text, buttons=buttons)
+            else:
+                await self.notifier.send(text)
         except NotifyError:
             self._counts["failed"] += 1
             self._failures += 1
@@ -209,7 +217,8 @@ class AlertDispatcher:
                 name, detail = self._label(session, event)
                 ts = event.ts.replace(tzinfo=UTC) if event.ts.tzinfo is None else event.ts.astimezone(UTC)
                 text = f"[{severity}] {title}: {name}{detail}\n{ts:%Y-%m-%d %H:%M:%S} UTC"
-                if not await self._deliver(text):
+                buttons = [[("Confirm", f"fo:c:{event.data['proposal_id']}"), ("Reject", f"fo:r:{event.data['proposal_id']}")]] if self.buttons_enabled and event.kind == "failover.proposed" and (event.data or {}).get("proposal_id") else None
+                if not await self._deliver(text, buttons):
                     break
                 state.value = str(event.id)
                 self._pending -= 1
