@@ -5,7 +5,18 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer, Probe
+from .config import Settings
+from .models import (
+    Event,
+    FailoverProposal,
+    HopLink,
+    Instance,
+    Node,
+    NodeObserved,
+    NodeRevision,
+    Peer,
+    Probe,
+)
 from .reconciler import NodeState
 from .renderer import active_placement, probe_iface_name
 
@@ -14,7 +25,7 @@ def escape_label(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None) -> str:
+def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None, failover=None) -> str:
     lines = []
 
     def sample(name, labels, value):
@@ -31,6 +42,16 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None,
     family("wgoctopus_alerts_pending", "gauge", "Alerts pending delivery.")
     alert_counts = alerts.counters() if alerts else {}
     sample("wgoctopus_alerts_enabled", {}, int(alerts is not None))
+    mode = Settings.from_env().failover_mode
+    family("wgoctopus_failover_mode", "gauge", "Configured failover mode.")
+    for value in ("off", "confirm", "auto"):
+        sample("wgoctopus_failover_mode", {"mode": value}, int(mode == value))
+    family("wgoctopus_failover_proposals", "gauge", "Failover proposals by state.")
+    proposal_counts = dict(session.execute(select(FailoverProposal.state, func.count(FailoverProposal.id)).group_by(FailoverProposal.state)).all())
+    for value in ("pending", "executed", "rejected", "expired", "cancelled", "failed"):
+        sample("wgoctopus_failover_proposals", {"state": value}, proposal_counts.get(value, 0))
+    family("wgoctopus_failover_pending", "gauge", "Pending failover proposals.")
+    sample("wgoctopus_failover_pending", {}, proposal_counts.get("pending", 0))
     for metric, key in (("wgoctopus_alerts_sent_total", "sent"), ("wgoctopus_alerts_failed_total", "failed"), ("wgoctopus_alerts_dropped_total", "dropped"), ("wgoctopus_alerts_pending", "pending")):
         sample(metric, {}, alert_counts.get(key, 0))
 

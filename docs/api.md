@@ -18,6 +18,11 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | GET `/metrics` | Prometheus text exposition (0.0.4) |
 | GET `/v1/alerts` | Alert enablement and delivery counters |
 | POST `/v1/alerts/test` | Send a test notification (202); 409 when disabled, 502 on delivery failure |
+| GET `/v1/failover` | Failover mode and evaluation settings |
+| GET `/v1/failovers`; GET `/v1/failovers/{id}` | List proposals (state, instance_id, limit, offset) or retrieve one |
+| POST `/v1/failovers/{id}/confirm`; POST `/v1/failovers/{id}/reject` | Confirm or reject a pending proposal; request body omitted |
+
+Failover errors use the standard error envelope: unknown ids are 404 `not_found`; proposals that cannot be decided (including expired, stale, or no candidate) are 409. Example: `curl -X POST -H 'Authorization: Bearer <token>' http://localhost:8080/v1/failovers/1/confirm`.
 
 Alert endpoints require bearer authentication. Responses never include Telegram credentials or chat identifiers.
 

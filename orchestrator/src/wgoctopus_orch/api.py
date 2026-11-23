@@ -1,5 +1,6 @@
 """HTTP API for the orchestrator service."""
 # ruff: noqa: B008, C408, BLE001
+import asyncio
 import hmac
 import ipaddress
 import logging
@@ -21,9 +22,11 @@ from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
+from .failover import FailoverError, build_failover
 from .metrics import render_metrics
 from .models import (
     Event,
+    FailoverProposal,
     HopLink,
     Instance,
     Node,
@@ -153,7 +156,7 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
@@ -185,7 +188,25 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         stop = __import__("asyncio").Event()
         task = __import__("asyncio").create_task(app.state.reconciler.run(stop)) if app.state.reconciler else None
         alert_task = __import__("asyncio").create_task(app.state.alerts.run(stop)) if app.state.alerts else None
+        app.state.failover = failover
+        if app.state.failover is None and alert_settings.failover_mode != "off" and app.state.reconciler:
+            app.state.failover = build_failover(sessions, app.state.reconciler, alert_settings,
+                on_executed=lambda instance_id, node_id: kick_for_failover(instance_id, node_id))
+        async def failover_loop():
+            while not stop.is_set():
+                try:
+                    await asyncio.to_thread(app.state.failover.evaluate_once)
+                except Exception as exc:
+                    log.error("Failover evaluation failed (%s)", type(exc).__name__)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=alert_settings.failover_eval_interval)
+                except TimeoutError:
+                    pass
+        failover_task = asyncio.create_task(failover_loop()) if app.state.failover else None
         yield
+        if failover_task:
+            stop.set()
+            await failover_task
         if task:
             stop.set()
             app.state.reconciler._kick.set()
@@ -251,6 +272,44 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             for ident in set(node_ids):
                 reconciler_obj.kick(ident)
 
+    def kick_for_failover(instance_id, node_id):
+        with sessions() as session:
+            hop_ids = session.scalars(select(HopLink.hop_id).where(HopLink.instance_id == instance_id)).all()
+            kick(session, [node_id, *hop_ids])
+
+    def proposal_json(p):
+        return {key: getattr(p, key) for key in ("id", "instance_id", "hop_id", "from_node_id", "to_node_id", "state", "mode_at_creation", "reason", "created_at", "expires_at", "decided_at", "decided_by", "error")}
+
+    @app.get("/v1/failover", dependencies=[Depends(auth)])
+    def failover_settings():
+        return {"mode": alert_settings.failover_mode, "enabled": alert_settings.failover_mode != "off", "down_seconds": alert_settings.failover_down_seconds, "proposal_ttl_seconds": alert_settings.failover_proposal_ttl_seconds, "cooldown_seconds": alert_settings.failover_cooldown_seconds, "eval_interval": alert_settings.failover_eval_interval}
+
+    @app.get("/v1/failovers", dependencies=[Depends(auth)])
+    def list_failovers(state: str | None = Query(None, pattern="^(pending|executed|rejected|expired|cancelled|failed)$"), instance_id: int | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), s: Session = Depends(db)):
+        query = select(FailoverProposal)
+        if state is not None: query = query.where(FailoverProposal.state == state)
+        if instance_id is not None: query = query.where(FailoverProposal.instance_id == instance_id)
+        return [proposal_json(p) for p in s.scalars(query.order_by(FailoverProposal.id.desc()).limit(limit).offset(offset)).all()]
+
+    @app.get("/v1/failovers/{ident}", dependencies=[Depends(auth)])
+    def get_failover(ident: int, s: Session = Depends(db)):
+        p = s.get(FailoverProposal, ident)
+        if not p: raise HTTPException(404, "not_found")
+        return proposal_json(p)
+
+    def decide(ident, action):
+        if not app.state.failover: raise HTTPException(409, "disabled")
+        try: return proposal_json(getattr(app.state.failover, action)(ident, by="api"))
+        except FailoverError as exc:
+            code = "not_found" if exc.code == "not_found" else exc.code
+            raise HTTPException(404 if code == "not_found" else 409, code) from None
+
+    @app.post("/v1/failovers/{ident}/confirm", dependencies=[Depends(auth)])
+    def confirm_failover(ident: int): return decide(ident, "confirm")
+
+    @app.post("/v1/failovers/{ident}/reject", dependencies=[Depends(auth)])
+    def reject_failover(ident: int): return decide(ident, "reject")
+
     def placed_nodes(session, instance_id):
         return session.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()
 
@@ -272,7 +331,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                     desired_revision=rev.desired_revision if rev else None,
                     observed=dict(last_seen_at=obs.last_seen_at,applied_revision=obs.applied_revision,healthy=obs.healthy,last_error=obs.last_error) if obs else None,
                     reconciler=dict(state=status.state.value,last_attempt_at=status.last_attempt_at,next_attempt_at=status.next_attempt_at,
-                                    consecutive_failures=status.consecutive_failures,last_outcome=status.last_outcome.status.value) if status else None)
+                                    consecutive_failures=status.consecutive_failures,last_outcome=status.last_outcome.status.value if status.last_outcome else None) if status else None)
 
     def peer(p):
         return dict(id=p.id,instance_id=p.instance_id,name=p.name,public_key=p.public_key,allowed_ip=p.allowed_ip,

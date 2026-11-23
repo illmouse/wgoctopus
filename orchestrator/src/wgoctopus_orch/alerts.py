@@ -71,6 +71,10 @@ RULES = {
     "node.blocked": ("CRITICAL", "Node blocked"), "node.drift": ("WARNING", "Node drift"),
     "probe.down": ("CRITICAL", "Probe down"), "probe.up": ("INFO", "Probe up"),
     "instance.switched": ("WARNING", "Instance switched"), "reconcile.error": ("WARNING", "Reconcile error"),
+    "failover.proposed": ("CRITICAL", "Failover proposed"), "failover.executed": ("WARNING", "Failover executed"),
+    "failover.no_candidate": ("CRITICAL", "Failover has no candidate"), "failover.failed": ("CRITICAL", "Failover failed"),
+    "failover.expired": ("WARNING", "Failover expired"), "failover.cancelled": ("INFO", "Failover cancelled"),
+    "failover.rejected": ("INFO", "Failover rejected"),
 }
 DOWN = {"node.unreachable": "node.recovered", "probe.down": "probe.up"}
 
@@ -113,6 +117,17 @@ class AlertDispatcher:
             instance = session.get(Instance, int(subject)) if subject.isdigit() else None
             subject = instance.name if instance else subject
         detail = ""
+        if event.kind.startswith("failover.") and data.get("proposal_id"):
+            from .models import FailoverProposal
+            proposal = session.get(FailoverProposal, data["proposal_id"])
+            if proposal:
+                instance = session.get(Instance, proposal.instance_id)
+                before, after = session.get(Node, proposal.from_node_id), session.get(Node, proposal.to_node_id)
+                subject = instance.name if instance else str(proposal.instance_id)
+                if event.kind == "failover.proposed":
+                    detail = f" #{proposal.id}: {before.name if before else proposal.from_node_id} to {after.name if after else proposal.to_node_id}; expires {proposal.expires_at.isoformat()}"
+                    if proposal.mode_at_creation == "confirm":
+                        detail += f"; confirm via API: POST /v1/failovers/{proposal.id}/confirm"
         if event.kind == "node.blocked" and isinstance(data.get("kind"), str):
             detail = f" ({data['kind']})"
         elif event.kind == "instance.switched":

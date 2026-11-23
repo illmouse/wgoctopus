@@ -83,7 +83,7 @@ async def test_scrape_success_metrics_and_unknown_peer(session, crypto, fake_age
 @pytest.mark.parametrize("mode", ["http", "garbage", "timeout"])
 async def test_scrape_failure_is_non_disruptive_and_keeps_previous_data(session, crypto, fake_agent_factory, monkeypatch, mode):
     (agent,) = await fake_agent_factory()
-    client, sessions, rec = setup_api(session, crypto, monkeypatch, scrape_timeout=.02 if mode == "timeout" else 1)
+    client, sessions, rec = setup_api(session, crypto, monkeypatch, scrape_timeout=.3 if mode == "timeout" else 1)
     with client:
         node, instance = add_node_and_instance(client, agent, f"scrape-{mode}", f"wg-{mode}")
         peer = client.post(f"/v1/instances/{instance['id']}/peers", json={"name": "peer"}).json()
@@ -95,7 +95,7 @@ async def test_scrape_failure_is_non_disruptive_and_keeps_previous_data(session,
         elif mode == "garbage":
             agent.metrics_text = "garbage\nnot a metric"
         else:
-            agent.metrics_delay = .1
+            agent.metrics_delay = 1.0
         rec.kick(node["id"], force=True)
         await rec.reconcile_once([node["id"]])
         scrape = rec.scrapes()[node["id"]]

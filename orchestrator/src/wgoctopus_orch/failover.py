@@ -10,6 +10,10 @@ from .renderer import active_placement
 from .service import switch_active
 
 
+def build_failover(session_factory, reconciler, settings, on_executed=None):
+    return FailoverEngine(session_factory, reconciler, settings, on_executed=on_executed)
+
+
 class FailoverError(Exception):
     def __init__(self, code, message=None):
         self.code = code

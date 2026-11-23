@@ -80,7 +80,9 @@ async def test_default_rule_messages_resolve_names_and_include_severity(session,
     create_hop_link(session, hop.id, inst.id, crypto)
     probe = create_probe(session, hop.id, inst.id, runner.id, crypto=crypto)
     kinds = ["node.unreachable", "node.recovered", "node.blocked", "node.drift", "probe.down",
-             "probe.up", "instance.switched", "reconcile.error"]
+             "probe.up", "instance.switched", "reconcile.error", "failover.proposed",
+             "failover.executed", "failover.no_candidate", "failover.failed", "failover.expired",
+             "failover.cancelled", "failover.rejected"]
     # Start after service-generated history, then exercise every default rule.
     session.add(AlertState(key="last_event_id", value=str(session.scalar(select(Event.id).order_by(Event.id.desc()).limit(1)) or 0)))
     session.commit()
@@ -92,7 +94,8 @@ async def test_default_rule_messages_resolve_names_and_include_severity(session,
                (kinds[4], probe.id, {}, base + timedelta(seconds=4)),
                (kinds[5], probe.id, {}, base + timedelta(seconds=5)),
                (kinds[6], inst.id, {"from": "old-node", "to": "new-node"}, base + timedelta(seconds=6)),
-               (kinds[7], "controller", {}, base + timedelta(seconds=7)))
+               (kinds[7], "controller", {}, base + timedelta(seconds=7)),
+               *((kind, "proposal", {"proposal_id": -1}, base + timedelta(seconds=8 + i)) for i, kind in enumerate(kinds[8:])))
     clock, notifier = Clock(100), FakeNotifier()
     dispatcher = AlertDispatcher(factory_for(session), notifier, delay_seconds=0, clock=clock)
     await dispatcher.poll_once()

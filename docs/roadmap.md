@@ -13,7 +13,7 @@
    - 4.4 Telegram notifications for node/probe/switch events, flap suppression, and rate limiting: done. Confirmation buttons for promotion are part of the failover stage.
 4a. **Parameter generation (adopt from [VAIPROG/Any-Tech-ARCHITECT](https://github.com/VAIPROG/Any-Tech-ARCHITECT), MIT):** borrow its mechanisms for choosing optimal obfuscation values instead of our naive random generator: per-protocol-version rules (1.0/1.5/2.0/3.0/3.1), valid and mutually compatible Jc/Jmin/Jmax, S1-S4 (incl. merged S), H1-H4 ranges without overlap or a WireGuard-like fingerprint, CPS I1-I5 profiles (e.g. QUIC/STUN), 3.1 flags (RandomTrailers, DisableCookies), recommended MTU 1280 for 3.1, uniqueness per instance so instances do not look identical to DPI, unbiased randomness with rejection sampling. Related: awg-containers-and-tools / `awg-tool` (UAPI-direct deployment). Study the source (`src/`), port the rules to Python in the orchestrator renderer, add tests; keep attribution per MIT.
 5. **Operations:** bot using orchestrator API and import of existing instances.
-6. **Failover:** confirmed active/standby failover, then active-active if needed.
+6. **Failover:** in progress — 5.1a engine and 5.1b API/lifecycle wiring done; Telegram confirmation buttons (5.2) remain. Confirmed active/standby failover, then active-active if needed.
 
 The data plane must remain independent of orchestrator availability. Back up the orchestrator store; node backups are not required. Active-active would use hop-side nftables `jhash` selection by client source IP.
 # Stage 3.5 — REST API and container
