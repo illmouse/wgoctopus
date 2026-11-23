@@ -29,6 +29,12 @@ On shutdown, the agent stops managed daemons but leaves its owned iptables rules
 
 Hop nodes use the same orchestrator push/reconcile path and `/v1/state` agent contract as AWG nodes, with empty `interfaces` and a `hop` section. Start their agent with `--hop-enabled`.
 
+### Failover
+
+The failover engine evaluates each linked instance with a synthetic probe. A probe must remain `DOWN` for `WGOCTOPUS_FAILOVER_DOWN_SECONDS`; `UNKNOWN` neither triggers nor resets the timer, while `UP` resets it. The probe runner may be the active node (it is not an independent vantage point, but is permitted). The hop must be `IN_SYNC`, and when multiple probes exist, failover is suppressed if all are down. A runner that is not `IN_SYNC` has an `UNKNOWN` probe status and does not trigger failover.
+
+Candidates are enabled AWG standby placements with `IN_SYNC` node status and a successful latest scrape showing the instance interface up. Highest placement weight wins, then lowest node ID. No candidate emits one `failover.no_candidate` event per down episode. One pending proposal per instance and the post-execution cooldown prevent repeated switching. Proposals expire, cancel if the signal/active placement/candidate becomes invalid, and can be confirmed or rejected; `auto` executes immediately and `off` disables evaluation. Switching updates placement and hop revisions through the normal service path. Signal timers reset on restart.
+
 ## Data flows
 
 1. An operator or bot/UI updates desired configuration through the orchestrator API.

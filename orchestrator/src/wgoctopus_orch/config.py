@@ -43,6 +43,11 @@ class Settings:
     alert_max_per_minute: int = 20
     alert_poll_seconds: float = 5
     alert_kinds: tuple[str, ...] | None = None
+    failover_mode: str = "confirm"
+    failover_down_seconds: float = 120
+    failover_proposal_ttl_seconds: float = 900
+    failover_cooldown_seconds: float = 600
+    failover_eval_interval: float = 15
 
     @classmethod
     def from_env(cls):
@@ -62,6 +67,9 @@ class Settings:
             raise ValueError("WGOCTOPUS_ALERTS_ENABLED must be auto, true, or false")
         if alerts == "true" and not (token and chat_id):
             raise ValueError("WGOCTOPUS_ALERTS_ENABLED=true requires Telegram token and chat ID")
+        failover_mode = os.getenv("WGOCTOPUS_FAILOVER_MODE", "confirm")
+        if failover_mode not in {"off", "confirm", "auto"}:
+            raise ValueError("WGOCTOPUS_FAILOVER_MODE must be off, confirm, or auto")
         kinds_text = os.getenv("WGOCTOPUS_ALERT_KINDS", "")
         kinds = tuple(k.strip() for k in kinds_text.split(",") if k.strip()) or None
         from .alerts import RULES
@@ -88,4 +96,9 @@ class Settings:
                    alerts == "true" or (alerts == "auto" and bool(token and chat_id)),
                    float(os.getenv("WGOCTOPUS_ALERT_DELAY_SECONDS", "60")),
                    int(os.getenv("WGOCTOPUS_ALERT_MAX_PER_MINUTE", "20")),
-                   float(os.getenv("WGOCTOPUS_ALERT_POLL_SECONDS", "5")), kinds)
+                   float(os.getenv("WGOCTOPUS_ALERT_POLL_SECONDS", "5")), kinds,
+                   failover_mode,
+                   float(os.getenv("WGOCTOPUS_FAILOVER_DOWN_SECONDS", "120")),
+                   float(os.getenv("WGOCTOPUS_FAILOVER_PROPOSAL_TTL", "900")),
+                   float(os.getenv("WGOCTOPUS_FAILOVER_COOLDOWN", "600")),
+                   float(os.getenv("WGOCTOPUS_FAILOVER_EVAL_INTERVAL", "15")))

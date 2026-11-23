@@ -15,6 +15,7 @@ SQLAlchemy 2.x models are migrated by Alembic into one SQLite database (WAL and 
 | `node_revisions` | Monotonic desired revision and SHA-256 checksum of canonical rendered content excluding revision. |
 | `node_observed` | Agent-reported applied revision/checksum, health, last-seen time, error, and raw JSON. Kept separate from desired state. |
 | `events` | Small audit records for service operations; secret values are never placed in event data. |
+| `failover_proposals` | Persisted failover decision, selected source/target, expiry, and outcome; instance/node deletion cascades. |
 
 Instance private keys, peer private keys, peer preshared keys, and node bearer tokens are Fernet encrypted at rest. The Fernet key is provided through `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE`; losing it makes encrypted data unrecoverable. Public keys and other configuration remain plaintext. Secret values must never be logged.
 
@@ -30,3 +31,7 @@ A probe's identity is a normal `peers` row owned by `__probe__`; its encrypted p
 # Alert state
 
 `alert_state` stores dispatcher cursors (currently `last_event_id`) so event processing resumes after restart without replaying history.
+
+## Failover proposals
+
+Proposals are stored as `pending`, then become `executed`, `rejected`, `expired`, `cancelled`, or `failed`. Creation records the mode and expiry; decisions record the actor/time. The down-duration tracker is in memory, so it resets on orchestrator restart.

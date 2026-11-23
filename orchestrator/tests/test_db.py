@@ -3,7 +3,7 @@ import time
 
 from sqlalchemy import text
 
-from wgoctopus_orch.db import make_engine, make_session_factory
+from wgoctopus_orch.db import make_engine, make_session_factory, upgrade_to_head
 
 
 def test_sqlite_write_waits_for_busy_transaction(tmp_path):
@@ -34,3 +34,16 @@ def test_sqlite_write_waits_for_busy_transaction(tmp_path):
             assert session.execute(text("SELECT COUNT(*) FROM writes")).scalar_one() == 2
     finally:
         engine.dispose()
+
+
+def test_migrations_are_idempotent_and_preserve_existing_rows(tmp_path):
+    url = f"sqlite:///{tmp_path / 'migration.db'}"
+    upgrade_to_head(url)
+    engine = make_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO events (ts, kind, subject, data) VALUES (CURRENT_TIMESTAMP, 'kept', '1', '{}')"))
+    upgrade_to_head(url)
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT kind FROM events")).scalar_one() == "kept"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005_failover"
+    engine.dispose()
