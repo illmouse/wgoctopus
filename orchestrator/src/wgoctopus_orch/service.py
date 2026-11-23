@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .awgparams import generate_obfuscation
 from .crypto import Crypto
 from .keys import generate_keypair, generate_psk, next_free_peer_ip
 from .models import (
@@ -43,11 +44,8 @@ def _event(session, kind, subject, data=None):
     session.add(Event(kind=kind, subject=subject, data=data or {}))
 
 
-def _default_obfuscation():
-    starts = sorted(secrets.SystemRandom().sample(range(1000, 4_000_000_000, 100), 4))
-    return {"jc": secrets.randbelow(5) + 4, "jmin": 8, "jmax": 80,
-            "s1": 1, "s2": 2, "s3": 3, "s4": 4,
-            **{f"h{i + 1}": f"{start}-{start + 5}" for i, start in enumerate(starts)}}
+def _default_obfuscation(mtu=None):
+    return generate_obfuscation(mtu=mtu or 1500)
 
 
 def create_instance(session: Session, name, listen_port, address, *, obfuscation=None, mtu=None,
@@ -58,7 +56,7 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
     private, public = generate_keypair()
     instance = Instance(name=name, listen_port=listen_port, address=address,
                         private_key_enc=_crypto(crypto).encrypt(private), public_key=public,
-                        obfuscation=obfuscation or _default_obfuscation(), mtu=mtu,
+                        obfuscation=obfuscation if obfuscation is not None else _default_obfuscation(mtu), mtu=mtu,
                         egress_interface=egress_interface, snat_ip=snat_ip)
     with _transaction(session):
         session.add(instance)
