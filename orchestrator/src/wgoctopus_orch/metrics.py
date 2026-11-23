@@ -1,6 +1,6 @@
 """Prometheus 0.0.4 text exposition for orchestrator state."""
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ def escape_label(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def render_metrics(session: Session, reconciler=None, version="0.1.0") -> str:
+def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None) -> str:
     lines = []
 
     def sample(name, labels, value):
@@ -40,7 +40,8 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0") -> str:
     family("wgoctopus_node_applied_revision", "gauge", "Latest applied node revision.")
     family("wgoctopus_node_last_seen_timestamp_seconds", "gauge", "Last observed timestamp.")
     family("wgoctopus_node_consecutive_failures", "gauge", "Consecutive reconcile failures.")
-    statuses = reconciler.status() if reconciler else {}
+    status_fn = getattr(reconciler, "status", None)
+    statuses = status_fn() if callable(status_fn) else {}
     for node in nodes:
         status = statuses.get(node.id)
         state = status.state.value if status else NodeState.UNKNOWN.value
@@ -86,7 +87,7 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0") -> str:
     family("wgoctopus_events_total", "counter", "Persisted event count by kind.")
     for kind, count in session.execute(select(Event.kind, func.count(Event.id)).group_by(Event.kind).order_by(Event.kind)):
         sample("wgoctopus_events_total", {"kind": kind}, count)
-    if reconciler:
+    if callable(status_fn):
         family("wgoctopus_reconcile_outcomes_total", "counter", "Reconcile outcomes since process start; resets on restart.")
         for outcome, count in sorted(reconciler.counters().items()) if hasattr(reconciler, "counters") else ():
             sample("wgoctopus_reconcile_outcomes_total", {"outcome": outcome}, count)
@@ -95,4 +96,50 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0") -> str:
             status = statuses.get(node.id)
             if status and status.last_duration_seconds is not None:
                 sample("wgoctopus_reconcile_last_duration_seconds", {"node": node.name}, status.last_duration_seconds)
+    scrapes_fn = getattr(reconciler, "scrapes", None)
+    scrapes = scrapes_fn() if callable(scrapes_fn) else {}
+    families = (
+        ("wgoctopus_node_scrape_success", "gauge", "Whether the latest node metrics scrape succeeded."),
+        ("wgoctopus_node_scrape_timestamp_seconds", "gauge", "Timestamp of the latest node metrics scrape."),
+        ("wgoctopus_interface_up", "gauge", "Whether the WireGuard interface is up."),
+        ("wgoctopus_peer_last_handshake_timestamp_seconds", "gauge", "Peer's last handshake timestamp; zero means never."),
+        ("wgoctopus_peer_handshake_age_seconds", "gauge", "Seconds since the peer's last handshake."),
+        ("wgoctopus_peer_rx_bytes_total", "counter", "Peer received bytes."),
+        ("wgoctopus_peer_tx_bytes_total", "counter", "Peer transmitted bytes."),
+        ("wgoctopus_instance_peers_active", "gauge", "Peers with handshake age at most 180 seconds."),
+        ("wgoctopus_unknown_peers", "gauge", "Scraped peers absent from the orchestrator database."),
+    )
+    for name, kind, help_text in families:
+        family(name, kind, help_text)
+    current = (now or datetime.now(UTC)).timestamp() if isinstance(now, (datetime, type(None))) else float(now)
+    for node in nodes:
+        scrape = scrapes.get(node.id)
+        if not scrape:
+            continue
+        labels = {"node": node.name}
+        sample("wgoctopus_node_scrape_success", labels, int(scrape.ok))
+        sample("wgoctopus_node_scrape_timestamp_seconds", labels, scrape.at.timestamp())
+        known = {(instance_name, peer.public_key): peer.name for peer, instance_name in
+                 session.execute(select(Peer, Instance.name).join(Instance).order_by(Peer.id)).all()}
+        unknown = {}
+        for interface, state in sorted(scrape.interfaces.items()):
+            sample("wgoctopus_interface_up", {"node": node.name, "instance": interface}, int(state["up"]))
+        active_counts = {}
+        for (interface, key), stat in sorted(scrape.peers.items()):
+            peer_name = known.get((interface, key))
+            if peer_name is None:
+                unknown[interface] = unknown.get(interface, 0) + 1
+                continue
+            peer_labels = {"node": node.name, "instance": interface, "peer": peer_name}
+            age = current - stat.handshake_ts if stat.handshake_ts > 0 else None
+            sample("wgoctopus_peer_last_handshake_timestamp_seconds", peer_labels, stat.handshake_ts)
+            if age is not None:
+                sample("wgoctopus_peer_handshake_age_seconds", peer_labels, age)
+                active_counts[interface] = active_counts.get(interface, 0) + int(age <= 180)
+            sample("wgoctopus_peer_rx_bytes_total", peer_labels, stat.rx)
+            sample("wgoctopus_peer_tx_bytes_total", peer_labels, stat.tx)
+        for interface in sorted(set(scrape.interfaces) | set(active_counts) | set(unknown)):
+            sample("wgoctopus_instance_peers_active", {"node": node.name, "instance": interface}, active_counts.get(interface, 0))
+        for interface, count in sorted(unknown.items()):
+            sample("wgoctopus_unknown_peers", {"node": node.name, "instance": interface}, count)
     return "\n".join(lines) + "\n"

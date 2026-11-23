@@ -31,6 +31,8 @@ class Settings:
     reconcile_blocked_recheck: float = 300
     reconcile_node_timeout: float = 120
     metrics_public: bool = False
+    scrape_enabled: bool = True
+    scrape_timeout: float = 10
 
     @classmethod
     def from_env(cls):
@@ -48,4 +50,6 @@ class Settings:
                     float(os.getenv("WGOCTOPUS_RECONCILE_MAX_BACKOFF", "300")),
                     float(os.getenv("WGOCTOPUS_RECONCILE_BLOCKED_RECHECK", "300")),
                     float(os.getenv("WGOCTOPUS_RECONCILE_NODE_TIMEOUT", "120")),
-                   os.getenv("WGOCTOPUS_METRICS_PUBLIC", "false").lower() == "true")
+                   os.getenv("WGOCTOPUS_METRICS_PUBLIC", "false").lower() == "true",
+                   os.getenv("WGOCTOPUS_SCRAPE_ENABLED", "true").lower() == "true",
+                   float(os.getenv("WGOCTOPUS_SCRAPE_TIMEOUT", "10")))

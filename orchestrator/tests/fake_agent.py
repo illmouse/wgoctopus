@@ -5,8 +5,9 @@ import urllib.parse
 
 
 class FakeAgent:
-    def __init__(self, token="test-token-not-secret", delay=0):
+    def __init__(self, token="test-token-not-secret", delay=0, metrics_text="# TYPE fake counter\nfake 1\n", metrics_status=200, metrics_delay=0):
         self.token, self.delay = token, delay
+        self.metrics_text, self.metrics_status, self.metrics_delay = metrics_text, metrics_status, metrics_delay
         self.requests, self.state = [], {"revision": 0, "interfaces": []}
         self._server = None
         self.port = 0
@@ -36,10 +37,13 @@ class FakeAgent:
             if self.delay:
                 await asyncio.sleep(self.delay)
             status, payload, content_type = 200, b"", "text/plain"
-            if parsed.path == "/healthz":
+            if parsed.path == "/metrics":
+                if self.metrics_delay:
+                    await asyncio.sleep(self.metrics_delay)
+                status = self.metrics_status
+                payload = self.metrics_text.encode()
+            elif parsed.path == "/healthz":
                 payload = b"ok"
-            elif parsed.path == "/metrics":
-                payload = b"# TYPE fake counter\nfake 1\n"
             elif headers.get("authorization") != f"Bearer {self.token}":
                 status, payload, content_type = 401, b'{"error":"unauthorized"}', "application/json"
             elif parsed.path == "/v1/state" and method == "GET":

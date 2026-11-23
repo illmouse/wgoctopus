@@ -20,6 +20,12 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 
 `GET /metrics` returns `text/plain; version=0.0.4; charset=utf-8`. It requires the same bearer administrator token as `/v1`; set `WGOCTOPUS_METRICS_PUBLIC=true` only when access is restricted by the network. The exposition contains no agent credentials, keys, PSKs, SSH details, or node addresses. Reconcile outcome counters are in memory and reset on process restart.
 
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `WGOCTOPUS_METRICS_PUBLIC` | `false` | Allow unauthenticated metrics access. |
+| `WGOCTOPUS_SCRAPE_ENABLED` | `true` | Enable best-effort AWG agent scrapes. |
+| `WGOCTOPUS_SCRAPE_TIMEOUT` | `10` | Maximum seconds for one agent metrics scrape. |
+
 | Metric | Meaning / labels |
 |---|---|
 | `wgoctopus_build_info` | Build version (`version`) |
@@ -30,6 +36,12 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | `wgoctopus_hop_route` | Resolved hop route (`hop`, `instance`, `backend_ip`, `port`) |
 | `wgoctopus_events_total` | Persisted event counts (`kind`) |
 | `wgoctopus_reconcile_outcomes_total`, `wgoctopus_reconcile_last_duration_seconds` | Process-lifetime outcomes and most recent push duration (`outcome` / `node`) |
+| `wgoctopus_node_scrape_success`, `wgoctopus_node_scrape_timestamp_seconds` | Latest best-effort agent metrics scrape status and time (`node`) |
+| `wgoctopus_interface_up` | Interface status (`node`, `instance`) |
+| `wgoctopus_peer_last_handshake_timestamp_seconds`, `wgoctopus_peer_handshake_age_seconds`, `wgoctopus_peer_rx_bytes_total`, `wgoctopus_peer_tx_bytes_total` | Known peer handshake and traffic (`node`, `instance`, `peer`) |
+| `wgoctopus_instance_peers_active`, `wgoctopus_unknown_peers` | Known peers with handshake age <= 180 seconds, and unrecognized peer count (`node`, `instance`) |
+
+Agent metrics are scraped best-effort after a successful in-sync push, over the same transport. Scrape failures never affect node state or create events; stale data is retained and marked unsuccessful. Scrapes are memory-only and reset on orchestrator restart. Public keys are used only for database matching and are never exposed. Set `WGOCTOPUS_SCRAPE_ENABLED=false` to disable; `WGOCTOPUS_SCRAPE_TIMEOUT` defaults to 10 seconds.
 
 Credentials, private keys, and PSKs are never returned except in the peer config endpoint (text/plain, `Cache-Control: no-store`). Agent tokens are write-only. Errors use `{"error":"...","detail":"..."}`; 404 means unknown id, 409 conflict, 422 invalid input, and readiness returns 503 when the database or encryption key is unavailable. Obfuscation, listen port, address and server keys cannot be changed through PATCH. OpenAPI and Swagger are disabled unless `WGOCTOPUS_API_DOCS=true`.
 

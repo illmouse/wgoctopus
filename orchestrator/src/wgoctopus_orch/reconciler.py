@@ -6,11 +6,13 @@ import random
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import select
 
+from .agent_client import AgentClient
+from .agent_metrics import extract_peer_stats, parse_agent_metrics
 from .models import Event, Node
 from .push import PushOutcome, PushStatus, push_node
 
@@ -40,6 +42,14 @@ class NodeStatus:
     last_duration_seconds: float | None = None
 
 
+@dataclass
+class Scrape:
+    at: datetime
+    ok: bool
+    interfaces: dict
+    peers: dict
+
+
 class Reconciler:
     def __init__(self, session_factory, transport_factory, settings, *, clock=time.monotonic,
                  sleep=asyncio.sleep, random_fn=random.random, crypto=None):
@@ -51,6 +61,7 @@ class Reconciler:
         self._locks_lock = threading.Lock()
         self._forced, self._kicks = set(), set()
         self._outcomes = {}
+        self._scrapes = {}
         self._kick = asyncio.Event()
 
     def kick(self, node_id, force=False):
@@ -147,9 +158,42 @@ class Reconciler:
             failures = 0
         self._status[ident] = NodeStatus(state, started, None, failures, outcome,
                                          outcome.error if outcome.error in {"unauthorized", "agent unreachable", "agent request timed out", "agent request failed"} else None,
-                                         duration)
+                                          duration)
+        if state == NodeState.IN_SYNC:
+            await self._scrape(ident)
         # Expose monotonic retry deadlines as UTC timestamps only where meaningful.
         return outcome
+
+    async def _scrape(self, ident):
+        if not getattr(self.settings, "scrape_enabled", True):
+            return
+        at = datetime.now(UTC)
+        try:
+            with self.session_factory() as session:
+                node = session.get(Node, ident)
+                if node is None or node.kind != "awg":
+                    return
+                transport = self.transport_factory(node)
+                async def fetch():
+                    async with transport.open(node) as conn:
+                        text = await AgentClient(conn, timeout=getattr(
+                            self.settings, "scrape_timeout", 10)).metrics_text()
+                    samples = parse_agent_metrics(text)
+                    if not samples:
+                        raise ValueError("metrics response contains no valid samples")
+                    return extract_peer_stats(samples)
+                interfaces, peers = await asyncio.wait_for(
+                    fetch(), timeout=getattr(self.settings, "scrape_timeout", 10))
+            self._scrapes[ident] = Scrape(at, True, interfaces, peers)
+        except Exception as exc:  # noqa: BLE001 - scraping cannot affect reconciliation.
+            log.debug("Metrics scrape failed for node %s (%s)", ident, type(exc).__name__)
+            previous = self._scrapes.get(ident)
+            self._scrapes[ident] = Scrape(at, False,
+                                          previous.interfaces if previous else {},
+                                          previous.peers if previous else {})
+
+    def scrapes(self):
+        return dict(self._scrapes)
 
     def counters(self):
         """Return in-memory reconcile totals; counters reset on process restart."""
