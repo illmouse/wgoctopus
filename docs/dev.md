@@ -42,6 +42,8 @@ The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictH
 
 `make e2e-orch-probe HOST=root@<test-host>` validates the synthetic probe end to end through a real hop, including path break/restore and event transitions. It creates uniquely named test resources and removes them on exit; run only on a disposable test host.
 
+`make e2e-orch-failover HOST=root@<test-host>` validates failover with confirmation end to end: hop, active and standby backends, a runner with a probe, and the orchestrator in `confirm` mode. It stops the active backend, waits for probe DOWN and a pending proposal, checks that nothing switches without confirmation, confirms via API, and verifies the hop DNAT moves to the standby, the probe returns UP and no duplicate proposals appear. Cleanup is verified against the iptables baseline.
+
 ## Manual image delivery
 
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:
