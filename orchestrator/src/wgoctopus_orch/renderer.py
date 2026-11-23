@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from .config import schema_path
 from .crypto import Crypto
-from .models import HopLink, Instance, Node, NodeRevision, Peer, Placement
+from .models import HopLink, Instance, Node, NodeRevision, Peer, Placement, Probe
+
+PROBE_KEEPALIVE = 5
+
+
+def probe_iface_name(probe_id: int) -> str:
+    return f"wgp{probe_id}"
 
 
 def active_placement(session: Session, instance_id: int):
@@ -66,6 +72,35 @@ def render_node_state(session: Session, node_id: int, crypto: Crypto | None = No
                 rendered["preshared_key"] = str(crypto.decrypt(peer.preshared_key_enc))
             interface["peers"].append(rendered)
         interfaces.append(interface)
+    probes = session.scalars(select(Probe).where(Probe.runner_node_id == node_id)).all()
+    for probe in sorted(probes, key=lambda item: probe_iface_name(item.id)):
+        hop = session.get(Node, probe.hop_id)
+        if hop is None or not hop.hop_ip:
+            continue
+        instance = session.get(Instance, probe.instance_id)
+        peer = session.get(Peer, probe.peer_id)
+        if peer is None or not peer.enabled:
+            continue
+        server_ip = instance.address.split("/", 1)[0]
+        probe_interface = {
+            "name": probe_iface_name(probe.id),
+            "mode": "client",
+            "listen_port": 0,
+            "private_key": str(crypto.decrypt(peer.private_key_enc)),
+            "address": f"{peer.allowed_ip}/32",
+            "obfuscation": instance.obfuscation,
+            "peers": [{
+                "public_key": instance.public_key,
+                "allowed_ips": [f"{server_ip}/32"],
+                "endpoint": f"{hop.hop_ip}:{instance.listen_port}",
+                "persistent_keepalive": PROBE_KEEPALIVE,
+            }],
+        }
+        if peer.preshared_key_enc:
+            probe_interface["peers"][0]["preshared_key"] = str(crypto.decrypt(peer.preshared_key_enc))
+        if instance.mtu is not None:
+            probe_interface["mtu"] = instance.mtu
+        interfaces.append(probe_interface)
     result = {"revision": revision.desired_revision if revision else 0, "interfaces": interfaces}
     with schema_path().open(encoding="utf-8") as file:
         schema = json.load(file)

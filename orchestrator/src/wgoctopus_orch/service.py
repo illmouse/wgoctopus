@@ -21,9 +21,12 @@ from .models import (
     NodeRevision,
     Peer,
     Placement,
+    Probe,
     now_utc,
 )
 from .renderer import render_node_state
+
+PROBE_OWNER = "__probe__"
 
 
 def _crypto(crypto):
@@ -107,6 +110,19 @@ def bump_revision(session: Session, node_id: int, crypto=None) -> bool:
 def _bump_hops(session, instance_id, crypto=None):
     for hop_id in session.scalars(select(HopLink.hop_id).where(HopLink.instance_id == instance_id)):
         bump_revision(session, hop_id, crypto)
+    _bump_probe_runners(session, instance_id=instance_id, crypto=crypto)
+
+
+def _bump_probe_runners(session, *, instance_id=None, hop_id=None, runner_node_id=None, crypto=None):
+    query = select(Probe.runner_node_id)
+    if instance_id is not None:
+        query = query.where(Probe.instance_id == instance_id)
+    if hop_id is not None:
+        query = query.where(Probe.hop_id == hop_id)
+    if runner_node_id is not None:
+        query = query.where(Probe.runner_node_id == runner_node_id)
+    for node_id in set(session.scalars(query)):
+        bump_revision(session, node_id, crypto)
 
 
 def place(session: Session, instance_id, node_id, role="active", weight=1, crypto=None):
@@ -136,6 +152,57 @@ def create_hop_link(session: Session, hop_id, instance_id, crypto=None):
         _event(session, "hop_link.created", f"{hop_id}:{instance_id}")
     bump_revision(session, hop_id, crypto)
     return link
+
+
+def create_probe(session: Session, hop_id, instance_id, runner_node_id, *, crypto=None):
+    with _transaction(session):
+        hop = session.get(Node, hop_id)
+        if hop is None or hop.kind != "hop" or not hop.hop_ip:
+            raise ValueError("probe requires a hop node with hop_ip")
+        if session.get(Instance, instance_id) is None:
+            raise ValueError(f"unknown instance {instance_id}")
+        if session.scalar(select(HopLink.id).where(
+            HopLink.hop_id == hop_id, HopLink.instance_id == instance_id
+        )) is None:
+            raise ValueError("probe requires an existing hop link")
+        runner = session.get(Node, runner_node_id)
+        if runner is None or runner.kind != "awg" or not runner.enabled:
+            raise ValueError("probe runner must be an enabled awg node")
+        if session.scalar(select(Probe.id).where(
+            Probe.hop_id == hop_id, Probe.instance_id == instance_id
+        )) is not None:
+            raise ValueError("probe already exists")
+        peer = add_peer(session, instance_id, f"probe-{hop.name}", owner=PROBE_OWNER, crypto=crypto)
+        probe = Probe(hop_id=hop_id, instance_id=instance_id, runner_node_id=runner_node_id, peer_id=peer.id)
+        session.add(probe)
+        session.flush()
+        _event(session, "probe.created", str(probe.id),
+               {"hop": hop_id, "instance": instance_id, "runner": runner_node_id})
+    _bump_probe_runners(session, instance_id=instance_id, crypto=crypto)
+    bump_revision(session, runner_node_id, crypto)
+    return probe
+
+
+def delete_probe(session: Session, probe_id, crypto=None):
+    with _transaction(session):
+        probe = session.get(Probe, probe_id)
+        if probe is None:
+            return False
+        instance_id, hop_id, runner_node_id, peer_id = (
+            probe.instance_id, probe.hop_id, probe.runner_node_id, probe.peer_id
+        )
+        session.delete(probe)
+        session.flush()
+        remove_peer(session, peer_id, crypto)
+        _event(session, "probe.deleted", str(probe_id),
+               {"hop": hop_id, "instance": instance_id, "runner": runner_node_id})
+    _bump_probe_runners(session, instance_id=instance_id, crypto=crypto)
+    bump_revision(session, runner_node_id, crypto)
+    return True
+
+
+def list_probes(session: Session):
+    return session.scalars(select(Probe).order_by(Probe.id)).all()
 
 
 def delete_hop_link(session: Session, hop_id, instance_id, crypto=None):
@@ -182,7 +249,8 @@ def add_peer(session: Session, instance_id, name, *, owner=None, crypto=None):
         session.add(peer)
         session.flush()
         node_ids = session.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()
-        _event(session, "peer.created", str(peer.id), {"instance_id": instance_id, "allowed_ip": allowed_ip})
+        if owner != PROBE_OWNER:  # the system probe peer is invisible; probe.created covers it
+            _event(session, "peer.created", str(peer.id), {"instance_id": instance_id, "allowed_ip": allowed_ip})
     for node_id in node_ids:
         bump_revision(session, node_id, crypto)
     return peer
@@ -209,7 +277,8 @@ def remove_peer(session: Session, peer_id, crypto=None):
         if peer is None:
             return False
         node_ids = session.scalars(select(Placement.node_id).where(Placement.instance_id == peer.instance_id)).all()
-        _event(session, "peer.removed", str(peer_id), {"instance_id": peer.instance_id})
+        if peer.owner != PROBE_OWNER:
+            _event(session, "peer.removed", str(peer_id), {"instance_id": peer.instance_id})
         session.delete(peer)
     for node_id in node_ids:
         bump_revision(session, node_id, crypto)

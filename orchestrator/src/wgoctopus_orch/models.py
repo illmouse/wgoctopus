@@ -58,6 +58,17 @@ class HopLink(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
 
 
+class Probe(Base):
+    __tablename__ = "probes"
+    __table_args__ = (UniqueConstraint("hop_id", "instance_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hop_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    instance_id: Mapped[int] = mapped_column(ForeignKey("instances.id", ondelete="CASCADE"), nullable=False)
+    runner_node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    peer_id: Mapped[int] = mapped_column(ForeignKey("peers.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+
+
 class Placement(Base):
     __tablename__ = "placements"
     __table_args__ = (UniqueConstraint("instance_id", "node_id"),)

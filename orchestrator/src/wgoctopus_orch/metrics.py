@@ -2,12 +2,12 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer
+from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer, Probe
 from .reconciler import NodeState
-from .renderer import active_placement
+from .renderer import active_placement, probe_iface_name
 
 
 def escape_label(value: object) -> str:
@@ -66,8 +66,9 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None)
     family("wgoctopus_peers", "gauge", "Peers per instance.")
     family("wgoctopus_peers_enabled", "gauge", "Enabled peers per instance.")
     for instance in instances:
-        for metric, query in (("wgoctopus_peers", select(func.count(Peer.id)).where(Peer.instance_id == instance.id)),
-                              ("wgoctopus_peers_enabled", select(func.count(Peer.id)).where(Peer.instance_id == instance.id, Peer.enabled.is_(True)))):
+        visible = or_(Peer.owner.is_(None), Peer.owner != "__probe__")
+        for metric, query in (("wgoctopus_peers", select(func.count(Peer.id)).where(Peer.instance_id == instance.id, visible)),
+                              ("wgoctopus_peers_enabled", select(func.count(Peer.id)).where(Peer.instance_id == instance.id, visible, Peer.enabled.is_(True)))):
             sample(metric, {"instance": instance.name}, session.scalar(query) or 0)
     family("wgoctopus_instance_active_node", "gauge", "Active node placement for an instance.")
     for instance in instances:
@@ -120,12 +121,15 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None)
         sample("wgoctopus_node_scrape_success", labels, int(scrape.ok))
         sample("wgoctopus_node_scrape_timestamp_seconds", labels, scrape.at.timestamp())
         known = {(instance_name, peer.public_key): peer.name for peer, instance_name in
-                 session.execute(select(Peer, Instance.name).join(Instance).order_by(Peer.id)).all()}
+                 session.execute(select(Peer, Instance.name).join(Instance).where(or_(Peer.owner.is_(None), Peer.owner != "__probe__")).order_by(Peer.id)).all()}
+        probe_interfaces = {probe_iface_name(probe.id) for probe in session.scalars(select(Probe)).all()}
         unknown = {}
         for interface, state in sorted(scrape.interfaces.items()):
             sample("wgoctopus_interface_up", {"node": node.name, "instance": interface}, int(state["up"]))
         active_counts = {}
         for (interface, key), stat in sorted(scrape.peers.items()):
+            if interface in probe_interfaces:
+                continue
             peer_name = known.get((interface, key))
             if peer_name is None:
                 unknown[interface] = unknown.get(interface, 0) + 1

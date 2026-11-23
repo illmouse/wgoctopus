@@ -12,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,9 +21,19 @@ from .config import Settings, database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
 from .metrics import render_metrics
-from .models import Event, HopLink, Instance, Node, NodeObserved, NodeRevision, Peer, Placement
+from .models import (
+    Event,
+    HopLink,
+    Instance,
+    Node,
+    NodeObserved,
+    NodeRevision,
+    Peer,
+    Placement,
+    Probe,
+)
 from .reconciler import build_reconciler
-from .renderer import active_placement
+from .renderer import active_placement, probe_iface_name
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +146,12 @@ class SwitchIn(Strict):
     node_id: int
 
 
+class ProbeIn(Strict):
+    hop_id: int
+    instance_id: int
+    runner_node_id: int
+
+
 def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
@@ -207,7 +223,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         return session.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()
 
     def inst(i, session):
-        peers = session.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(Peer.instance_id == i.id))
+        peers = session.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(Peer.instance_id == i.id, or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))
         placements = session.scalars(select(Placement).where(Placement.instance_id == i.id)).all()
         return dict(id=i.id, name=i.name, listen_port=i.listen_port, address=i.address, public_key=i.public_key,
                     obfuscation=i.obfuscation, mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
@@ -284,6 +300,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         nodes=placed_nodes(s,ident); s.flush()
         for n in nodes: service.bump_revision(s,n,cipher)
         if "listen_port" in changes: service._bump_hops(s,ident,cipher)
+        if {"listen_port", "mtu"} & changes.keys(): service._bump_probe_runners(s,instance_id=ident,crypto=cipher)
         kick(s,nodes); return inst(i,s)
 
     @app.delete("/v1/instances/{ident}",dependencies=[Depends(auth)],status_code=204)
@@ -344,6 +361,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         hop_ids = []
         if body:
             service.bump_revision(s,ident,cipher)
+            if n.kind == "hop" and {"hop_ip", "wan_interface"} & body.keys():
+                service._bump_probe_runners(s,hop_id=ident,crypto=cipher)
+            if n.kind == "awg":
+                service._bump_probe_runners(s,runner_node_id=ident,crypto=cipher)
             if "backend_ip" in body:
                 hop_ids = s.scalars(select(HopLink.hop_id).join(Placement, Placement.instance_id == HopLink.instance_id)
                                     .where(Placement.node_id == ident)).all()
@@ -407,6 +428,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.post("/v1/instances/{ident}/peers",dependencies=[Depends(auth)],status_code=201)
     def create_peer(ident:int,body:PeerIn,s:Session=Depends(db)):
+        if body.owner == service.PROBE_OWNER:
+            raise HTTPException(422, "owner is reserved")
         try:
             p=service.add_peer(s,ident,body.name,owner=body.owner,crypto=cipher)
         except ValueError as exc:
@@ -417,7 +440,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/v1/instances/{ident}/peers",dependencies=[Depends(auth)])
     def list_peers(ident:int,owner:str|None=None,enabled:bool|None=None,limit:int=Query(100,ge=1,le=1000),offset:int=Query(0,ge=0),s:Session=Depends(db)):
-        q=select(Peer).where(Peer.instance_id==ident)
+        q=select(Peer).where(Peer.instance_id==ident, or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER))
         if owner is not None:q=q.where(Peer.owner==owner)
         if enabled is not None:q=q.where(Peer.enabled==enabled)
         return [peer(p) for p in s.scalars(q.offset(offset).limit(limit)).all()]
@@ -425,13 +448,13 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     @app.get("/v1/peers/{ident}",dependencies=[Depends(auth)])
     def get_peer(ident:int,s:Session=Depends(db)):
         p=s.get(Peer,ident)
-        if not p: raise HTTPException(404,"unknown peer")
+        if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
         return peer(p)
 
     @app.patch("/v1/peers/{ident}",dependencies=[Depends(auth)])
     def patch_peer(ident:int,body:PeerPatch,s:Session=Depends(db)):
         p=s.get(Peer,ident)
-        if not p: raise HTTPException(404,"unknown peer")
+        if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
         body=body.model_dump(exclude_unset=True)
         nodes=placed_nodes(s,p.instance_id)
         if "enabled" in body: service.set_peer_enabled(s,ident,body.pop("enabled"),cipher)
@@ -443,17 +466,62 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.delete("/v1/peers/{ident}",dependencies=[Depends(auth)],status_code=204)
     def delete_peer(ident:int,s:Session=Depends(db)):
-        nodes=placed_nodes(s,s.get(Peer,ident).instance_id) if s.get(Peer,ident) else []
+        p=s.get(Peer, ident)
+        if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
+        nodes=placed_nodes(s,p.instance_id)
         if not service.remove_peer(s,ident,cipher): raise HTTPException(404,"unknown peer")
         kick(s,nodes); return Response(status_code=204)
 
     @app.get("/v1/peers/{ident}/config",dependencies=[Depends(auth)])
     def peer_config(ident:int,endpoint_host:str|None=None,s:Session=Depends(db)):
+        p=s.get(Peer, ident)
+        if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
         endpoint_host=endpoint_host or os.getenv("WGOCTOPUS_CLIENT_ENDPOINT_HOST")
         if not endpoint_host: raise HTTPException(422,"endpoint_host is required")
         text=service.render_client_config(s,ident,endpoint_host,crypto=cipher)
         s.add(Event(kind="peer.config_issued",subject=str(ident),data={}))
         return Response(text,media_type="text/plain",headers={"Cache-Control":"no-store"})
+
+    def probe_dict(p):
+        return dict(id=p.id, hop_id=p.hop_id, instance_id=p.instance_id,
+                    runner_node_id=p.runner_node_id, interface=probe_iface_name(p.id), created_at=p.created_at)
+
+    @app.post("/v1/probes", dependencies=[Depends(auth)], status_code=201)
+    def create_probe(body: ProbeIn, s: Session = Depends(db)):
+        try:
+            p = service.create_probe(s, body.hop_id, body.instance_id, body.runner_node_id, crypto=cipher)
+        except ValueError as exc:
+            if "already exists" in str(exc):
+                raise HTTPException(409, str(exc)) from exc
+            raise
+        kick(s, [p.runner_node_id, *placed_nodes(s, p.instance_id)])
+        return probe_dict(p)
+
+    @app.get("/v1/probes", dependencies=[Depends(auth)])
+    def get_probes(hop_id: int | None = None, instance_id: int | None = None,
+                   runner_node_id: int | None = None, s: Session = Depends(db)):
+        query = select(Probe).order_by(Probe.id)
+        for field, value in ((Probe.hop_id, hop_id), (Probe.instance_id, instance_id),
+                             (Probe.runner_node_id, runner_node_id)):
+            if value is not None:
+                query = query.where(field == value)
+        return [probe_dict(p) for p in s.scalars(query).all()]
+
+    @app.get("/v1/probes/{ident}", dependencies=[Depends(auth)])
+    def get_probe(ident: int, s: Session = Depends(db)):
+        p = s.get(Probe, ident)
+        if not p: raise HTTPException(404, "unknown probe")
+        return probe_dict(p)
+
+    @app.delete("/v1/probes/{ident}", dependencies=[Depends(auth)], status_code=204)
+    def remove_probe(ident: int, s: Session = Depends(db)):
+        p = s.get(Probe, ident)
+        if not p: raise HTTPException(404, "unknown probe")
+        runner = p.runner_node_id
+        instance_id = p.instance_id
+        service.delete_probe(s, ident, cipher)
+        kick(s, [runner, *placed_nodes(s, instance_id)])
+        return Response(status_code=204)
 
     @app.post("/v1/nodes/{ident}/reconcile",dependencies=[Depends(auth)],status_code=202)
     def reconcile(ident:int, s: Session=Depends(db)):
@@ -484,6 +552,6 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         statuses=app.state.reconciler.status().values() if app.state.reconciler else []
         for st in statuses: states[st.state.value]+=1
         return {"nodes_by_state":states,"nodes_unhealthy":s.scalar(select(__import__("sqlalchemy").func.count(NodeObserved.node_id)).where(NodeObserved.healthy.is_(False))),
-                "instances":s.scalar(select(__import__("sqlalchemy").func.count(Instance.id))),"peers":s.scalar(select(__import__("sqlalchemy").func.count(Peer.id)))}
+                "instances":s.scalar(select(__import__("sqlalchemy").func.count(Instance.id))),"peers":s.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))}
 
     return app
