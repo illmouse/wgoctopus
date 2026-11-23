@@ -38,6 +38,8 @@ The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictH
 
 `make e2e-orch-hop HOST=root@<test-host>` exercises the orchestrator driving a real hop agent over SSH, including backend switching, conntrack cleanup, restart persistence, and cleanup checks. The script ships the agent image unless `E2E_SKIP_SHIP=1` and removes only uniquely named resources; use only a dedicated disposable host.
 
+`make e2e-probe HOST=root@<test-host>` tests a client-mode peer handshake between two agents on one disposable host. It ships the image unless `E2E_SKIP_SHIP=1`; SSH options and protected container IDs can be set with `SSH_OPTS` and `E2E_PROTECTED_IDS`.
+
 ## Manual image delivery
 
 Build an image locally, then transfer and load it on a remote test host with Docker access and SSH access:
