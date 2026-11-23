@@ -26,6 +26,8 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | `WGOCTOPUS_METRICS_PUBLIC` | `false` | Allow unauthenticated metrics access. |
 | `WGOCTOPUS_SCRAPE_ENABLED` | `true` | Enable best-effort AWG agent scrapes. |
 | `WGOCTOPUS_SCRAPE_TIMEOUT` | `10` | Maximum seconds for one agent metrics scrape. |
+| `WGOCTOPUS_PROBE_STALE_SECONDS` | `180` | Handshake age after which a synthetic probe is DOWN. |
+| `WGOCTOPUS_PROBE_GRACE_SECONDS` | `60` | Grace after first interface observation before a never-handshaken probe is DOWN. |
 
 | Metric | Meaning / labels |
 |---|---|
@@ -34,13 +36,14 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | `wgoctopus_node_state`, `wgoctopus_node_enabled`, `wgoctopus_node_consecutive_failures` | Node reconciler state (one-hot), enabled flag, and failures (`node`, `kind`, `state`) |
 | `wgoctopus_node_desired_revision`, `wgoctopus_node_applied_revision`, `wgoctopus_node_last_seen_timestamp_seconds` | Node desired/observed revisions and observation time (`node`) |
 | `wgoctopus_instance_active_node` | Active placement (`instance`, `node`) |
-| `wgoctopus_hop_route` | Resolved hop route (`hop`, `instance`, `backend_ip`, `port`) |
+| `wgoctopus_hop_route` | Resolved hop route (`hop`, `instance`, `port`); addresses are omitted |
 | `wgoctopus_events_total` | Persisted event counts (`kind`) |
 | `wgoctopus_reconcile_outcomes_total`, `wgoctopus_reconcile_last_duration_seconds` | Process-lifetime outcomes and most recent push duration (`outcome` / `node`) |
 | `wgoctopus_node_scrape_success`, `wgoctopus_node_scrape_timestamp_seconds` | Latest best-effort agent metrics scrape status and time (`node`) |
 | `wgoctopus_interface_up` | Interface status (`node`, `instance`) |
 | `wgoctopus_peer_last_handshake_timestamp_seconds`, `wgoctopus_peer_handshake_age_seconds`, `wgoctopus_peer_rx_bytes_total`, `wgoctopus_peer_tx_bytes_total` | Known peer handshake and traffic (`node`, `instance`, `peer`) |
 | `wgoctopus_instance_peers_active`, `wgoctopus_unknown_peers` | Known peers with handshake age <= 180 seconds, and unrecognized peer count (`node`, `instance`) |
+| `wgoctopus_probe_state`, `wgoctopus_probe_handshake_age_seconds` | Synthetic probe one-hot state and known handshake age (`probe`, `hop`, `instance`, `runner`, optionally `state`) |
 
 Agent metrics are scraped best-effort after a successful in-sync push, over the same transport. Scrape failures never affect node state or create events; stale data is retained and marked unsuccessful. Scrapes are memory-only and reset on orchestrator restart. Public keys are used only for database matching and are never exposed. Set `WGOCTOPUS_SCRAPE_ENABLED=false` to disable; `WGOCTOPUS_SCRAPE_TIMEOUT` defaults to 10 seconds.
 

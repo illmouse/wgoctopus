@@ -33,6 +33,8 @@ class Settings:
     metrics_public: bool = False
     scrape_enabled: bool = True
     scrape_timeout: float = 10
+    probe_stale_seconds: float = 180
+    probe_grace_seconds: float = 60
 
     @classmethod
     def from_env(cls):
@@ -52,4 +54,6 @@ class Settings:
                     float(os.getenv("WGOCTOPUS_RECONCILE_NODE_TIMEOUT", "120")),
                    os.getenv("WGOCTOPUS_METRICS_PUBLIC", "false").lower() == "true",
                    os.getenv("WGOCTOPUS_SCRAPE_ENABLED", "true").lower() == "true",
-                   float(os.getenv("WGOCTOPUS_SCRAPE_TIMEOUT", "10")))
+                   float(os.getenv("WGOCTOPUS_SCRAPE_TIMEOUT", "10")),
+                   float(os.getenv("WGOCTOPUS_PROBE_STALE_SECONDS", "180")),
+                   float(os.getenv("WGOCTOPUS_PROBE_GRACE_SECONDS", "60")))

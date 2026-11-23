@@ -108,6 +108,85 @@ async def test_probe_delivery_scrape_and_delete(session, fake_agent_factory, cry
 
 
 @pytest.mark.asyncio
+async def test_probe_status_transitions_and_metrics(session, fake_agent_factory, crypto, monkeypatch):
+    from wgoctopus_orch.metrics import render_metrics
+
+    active_agent, runner_agent, hop_agent = await fake_agent_factory(3)
+    client, sessions, rec = _api(session, crypto, monkeypatch)
+    with client:
+        active, runner, hop, instance = _create_fixture(client, active_agent, runner_agent, hop_agent)
+        probe = client.post("/v1/probes", json={"hop_id": hop["id"], "instance_id": instance["id"],
+            "runner_node_id": runner["id"]}).json()
+        public_key = client.get(f"/v1/instances/{instance['id']}").json()["public_key"]
+        nodes = {active["id"], runner["id"], hop["id"]}
+        await rec.reconcile_once(nodes)
+        assert all(rec.status()[ident].state.value == "IN_SYNC" for ident in nodes)
+
+        iface = f"wgp{probe['id']}"
+        now = datetime.now(UTC).timestamp()
+
+        def metrics(timestamp):
+            runner_agent.metrics_text = "\n".join((
+                f'wg_interface_up{{interface="{iface}"}} 1',
+                f'wg_peer_last_handshake_timestamp_seconds{{interface="{iface}",public_key="{public_key}"}} {timestamp}',
+            ))
+
+        async def reconcile():
+            await rec.reconcile_once(nodes)
+
+        def probe_data():
+            return client.get(f"/v1/probes/{probe['id']}").json()
+
+        metrics(now - 10)
+        await reconcile()
+        data = probe_data()
+        assert data["status"] == "UP", (data, rec.scrapes().get(runner["id"]), public_key, iface)
+        assert data["handshake_age_seconds"] == pytest.approx(10, abs=2)
+        text = client.get("/metrics").text
+        assert f'wgoctopus_probe_state{{probe="{iface}",hop="probe-hop",instance="wgprobe",runner="probe-runner",state="UP"}} 1' in text
+
+        events = client.get("/v1/events").json()
+        assert [e["kind"] for e in reversed(events) if e["kind"] in {"probe.up", "probe.down"}] == ["probe.up"]
+        metrics(now - 1000)
+        await reconcile()
+        assert probe_data()["status"] == "DOWN"
+        events = client.get("/v1/events").json()
+        assert [e["kind"] for e in reversed(events) if e["kind"] in {"probe.up", "probe.down"}] == ["probe.up", "probe.down"]
+
+        metrics(datetime.now(UTC).timestamp() - 10)
+        await reconcile()
+        assert probe_data()["status"] == "UP"
+        await reconcile()
+        events = client.get("/v1/events").json()
+        assert [e["kind"] for e in reversed(events) if e["kind"] in {"probe.up", "probe.down"}] == ["probe.up", "probe.down", "probe.up"]
+
+        runner_agent.metrics_status = 500
+        await reconcile()
+        assert probe_data()["status"] == "UNKNOWN"
+        events = client.get("/v1/events").json()
+        assert [e["kind"] for e in reversed(events) if e["kind"] in {"probe.up", "probe.down"}] == ["probe.up", "probe.down", "probe.up"]
+
+        with sessions() as db:
+            text = render_metrics(db, rec)
+        responses = (text, client.get("/metrics").text, client.get("/v1/probes").text,
+                     client.get(f"/v1/probes/{probe['id']}").text, client.get("/v1/events").text)
+        private_keys = [key for agent in (active_agent, runner_agent, hop_agent)
+                        for iface_data in agent.state["interfaces"] for key in [iface_data.get("private_key")]
+                        if key]
+        for output in responses:
+            assert public_key not in output
+            assert all(key not in output for key in private_keys)
+            assert "198.51.100.9" not in output and "192.0.2.10" not in output
+
+        assert client.delete(f"/v1/probes/{probe['id']}").status_code == 204
+        assert probe["id"] not in rec.probe_statuses()
+        with sessions() as db:
+            text = render_metrics(db, rec)
+        assert 'wgoctopus_probe_state{probe="wgp' not in text
+        assert 'wgoctopus_probe_handshake_age_seconds{probe="wgp' not in text
+
+
+@pytest.mark.asyncio
 async def test_probe_api_rejects_invalid_runner_link_and_duplicate(session, fake_agent_factory, crypto, monkeypatch):
     a, b, h = await fake_agent_factory(3)
     client, _, _ = _api(session, crypto, monkeypatch)
@@ -147,7 +226,8 @@ def test_probe_api_visibility_and_secret_safety(api, crypto):
     response = client.post("/v1/probes", json=payload)
     assert response.status_code == 201
     data = response.json()
-    assert set(data) == {"id", "hop_id", "instance_id", "runner_node_id", "interface", "created_at"}
+    assert set(data) == {"id", "hop_id", "instance_id", "runner_node_id", "interface", "created_at", "status", "handshake_age_seconds"}
+    assert data["status"] == "UNKNOWN" and data["handshake_age_seconds"] is None
     assert client.get(f"/v1/probes/{data['id']}").json()["id"] == data["id"]
     assert [p["id"] for p in client.get("/v1/probes", params={"runner_node_id": runner["id"]}).json()] == [data["id"]]
     with sessions() as session:

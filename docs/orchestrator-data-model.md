@@ -1,5 +1,7 @@
 # Orchestrator data model
 
+Synthetic probe status (UNKNOWN, UP, DOWN) is evaluated from runner scrapes in memory; first-seen grace and handshake staleness are configurable. Status/events reset on orchestrator restart.
+
 SQLAlchemy 2.x models are migrated by Alembic into one SQLite database (WAL and foreign keys enabled).
 
 | Table | Purpose |

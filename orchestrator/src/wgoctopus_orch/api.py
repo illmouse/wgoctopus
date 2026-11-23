@@ -483,8 +483,11 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         return Response(text,media_type="text/plain",headers={"Cache-Control":"no-store"})
 
     def probe_dict(p):
+        result = app.state.reconciler.probe_statuses().get(p.id) if app.state.reconciler and callable(getattr(app.state.reconciler, "probe_statuses", None)) else None
         return dict(id=p.id, hop_id=p.hop_id, instance_id=p.instance_id,
-                    runner_node_id=p.runner_node_id, interface=probe_iface_name(p.id), created_at=p.created_at)
+                    runner_node_id=p.runner_node_id, interface=probe_iface_name(p.id), created_at=p.created_at,
+                    status=result.state.value if result else "UNKNOWN",
+                    handshake_age_seconds=int(result.age_seconds) if result and result.age_seconds is not None else None)
 
     @app.post("/v1/probes", dependencies=[Depends(auth)], status_code=201)
     def create_probe(body: ProbeIn, s: Session = Depends(db)):
@@ -520,6 +523,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         runner = p.runner_node_id
         instance_id = p.instance_id
         service.delete_probe(s, ident, cipher)
+        if app.state.reconciler and callable(getattr(app.state.reconciler, "forget_probe", None)):
+            app.state.reconciler.forget_probe(ident)
         kick(s, [runner, *placed_nodes(s, instance_id)])
         return Response(status_code=204)
 

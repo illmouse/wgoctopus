@@ -84,7 +84,7 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None)
         active = active_placement(session, link.instance_id)
         backend = session.get(Node, active.node_id) if active else None
         if hop and instance and backend and backend.backend_ip:
-            sample("wgoctopus_hop_route", {"hop": hop.name, "instance": instance.name, "backend_ip": backend.backend_ip, "port": instance.listen_port}, 1)
+            sample("wgoctopus_hop_route", {"hop": hop.name, "instance": instance.name, "port": instance.listen_port}, 1)
     family("wgoctopus_events_total", "counter", "Persisted event count by kind.")
     for kind, count in session.execute(select(Event.kind, func.count(Event.id)).group_by(Event.kind).order_by(Event.kind)):
         sample("wgoctopus_events_total", {"kind": kind}, count)
@@ -112,6 +112,21 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None)
     )
     for name, kind, help_text in families:
         family(name, kind, help_text)
+    family("wgoctopus_probe_state", "gauge", "One-hot synthetic probe state.")
+    family("wgoctopus_probe_handshake_age_seconds", "gauge", "Seconds since the synthetic probe handshake.")
+    probe_status_fn = getattr(reconciler, "probe_statuses", None)
+    probe_statuses = probe_status_fn() if callable(probe_status_fn) else {}
+    for probe in session.scalars(select(Probe).order_by(Probe.id)):
+        hop, instance, runner = session.get(Node, probe.hop_id), session.get(Instance, probe.instance_id), session.get(Node, probe.runner_node_id)
+        labels = {"probe": probe_iface_name(probe.id), "hop": hop.name if hop else str(probe.hop_id),
+                  "instance": instance.name if instance else str(probe.instance_id), "runner": runner.name if runner else str(probe.runner_node_id)}
+        status = probe_statuses.get(probe.id)
+        state = status.state.value if status else "UNKNOWN"
+        for possible in ("UNKNOWN", "UP", "DOWN"):
+            sample("wgoctopus_probe_state", {**labels, "state": possible}, int(state == possible))
+        age = getattr(status, "age_seconds", None)
+        if age is not None:
+            sample("wgoctopus_probe_handshake_age_seconds", labels, age)
     current = (now or datetime.now(UTC)).timestamp() if isinstance(now, (datetime, type(None))) else float(now)
     for node in nodes:
         scrape = scrapes.get(node.id)

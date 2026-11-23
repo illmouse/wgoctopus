@@ -78,7 +78,7 @@ def test_metrics_database_series_and_reconcile_counters(api):
     for expected in (
         'wgoctopus_node_applied_revision{node="backend"} 7',
         'wgoctopus_instance_active_node{instance="metrics-wg",node="backend"} 1',
-        'wgoctopus_hop_route{hop="hop",instance="metrics-wg",backend_ip="192.0.2.21",port="51820"} 1',
+        'wgoctopus_hop_route{hop="hop",instance="metrics-wg",port="51820"} 1',
         'wgoctopus_events_total{kind="metric.test"} 1',
         'wgoctopus_reconcile_outcomes_total{outcome="OK"} 3',
         'wgoctopus_reconcile_last_duration_seconds{node="backend"} 0.25',

@@ -13,8 +13,10 @@ from sqlalchemy import select
 
 from .agent_client import AgentClient
 from .agent_metrics import extract_peer_stats, parse_agent_metrics
-from .models import Event, Node
+from .models import Event, Instance, Node, Peer, Probe
+from .probe_status import ProbeState, ProbeStatusTracker
 from .push import PushOutcome, PushStatus, push_node
+from .renderer import probe_iface_name
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +52,12 @@ class Scrape:
     peers: dict
 
 
+@dataclass(frozen=True)
+class ProbeStatus:
+    state: ProbeState
+    age_seconds: float | None
+
+
 class Reconciler:
     def __init__(self, session_factory, transport_factory, settings, *, clock=time.monotonic,
                  sleep=asyncio.sleep, random_fn=random.random, crypto=None):
@@ -62,6 +70,8 @@ class Reconciler:
         self._forced, self._kicks = set(), set()
         self._outcomes = {}
         self._scrapes = {}
+        self._probe_tracker = ProbeStatusTracker(getattr(settings, "probe_stale_seconds", 180), getattr(settings, "probe_grace_seconds", 60))
+        self._probe_statuses, self._last_probe_states = {}, {}
         self._kick = asyncio.Event()
 
     def kick(self, node_id, force=False):
@@ -161,6 +171,7 @@ class Reconciler:
                                           duration)
         if state == NodeState.IN_SYNC:
             await self._scrape(ident)
+        self._evaluate_probes(ident)
         # Expose monotonic retry deadlines as UTC timestamps only where meaningful.
         return outcome
 
@@ -191,6 +202,42 @@ class Reconciler:
             self._scrapes[ident] = Scrape(at, False,
                                           previous.interfaces if previous else {},
                                           previous.peers if previous else {})
+        self._evaluate_probes(ident)
+
+    def _evaluate_probes(self, node_id):
+        with self.session_factory() as session:
+            probes = session.scalars(select(Probe).where(Probe.runner_node_id == node_id)).all()
+            active_ids = set(session.scalars(select(Probe.id)).all())
+            for ident in set(self._probe_tracker.records) - active_ids:
+                self._probe_tracker.discard(ident)
+                self._probe_statuses.pop(ident, None)
+                self._last_probe_states.pop(ident, None)
+            scrape = self._scrapes.get(node_id)
+            in_sync = self._status.get(node_id, NodeStatus()).state == NodeState.IN_SYNC
+            for probe in probes:
+                peer = session.get(Peer, probe.peer_id)
+                instance = session.get(Instance, probe.instance_id)
+                state, age = self._probe_tracker.evaluate(probe.id, scrape, in_sync,
+                    probe_iface_name(probe.id),
+                    instance.public_key if peer and instance else "",
+                    time.time())
+                previous = self._last_probe_states.get(probe.id, ProbeState.UNKNOWN)
+                if state != ProbeState.UNKNOWN and state != previous:
+                    session.add(Event(kind="probe.up" if state == ProbeState.UP else "probe.down",
+                        subject=str(probe.id), data={"probe_id": probe.id, "hop_id": probe.hop_id,
+                        "instance_id": probe.instance_id, "runner_node_id": probe.runner_node_id,
+                        **({"age_seconds": age} if age is not None else {})}))
+                    self._last_probe_states[probe.id] = state
+                self._probe_statuses[probe.id] = ProbeStatus(state, age)
+            session.commit()
+
+    def probe_statuses(self):
+        return dict(self._probe_statuses)
+
+    def forget_probe(self, probe_id):
+        self._probe_tracker.discard(probe_id)
+        self._probe_statuses.pop(probe_id, None)
+        self._last_probe_states.pop(probe_id, None)
 
     def scrapes(self):
         return dict(self._scrapes)
