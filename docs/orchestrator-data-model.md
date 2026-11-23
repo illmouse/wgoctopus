@@ -1,5 +1,14 @@
 # Orchestrator data model
 
+## CPS signature packets (I1-I5)
+
+The standalone `awgcps.py` generator builds I1 protocol-shaped signatures
+(QUIC Initial, TLS ClientHello, DNS, WireGuard Noise, or SIP) and entropy tags
+for I2-I5 by default; `mimic_all` repeats the selected profile. `<c>` is off by
+default because amneziawg-go does not support that tag. Chains observe the
+3,200-byte kernel-module budget. Wiring these generated values into instance
+creation comes in the next step.
+
 Synthetic probe status (UNKNOWN, UP, DOWN) is evaluated from runner scrapes in memory; first-seen grace and handshake staleness are configurable. Status/events reset on orchestrator restart.
 
 SQLAlchemy 2.x models are migrated by Alembic into one SQLite database (WAL and foreign keys enabled).
