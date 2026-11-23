@@ -32,6 +32,7 @@ const negative = [
   ['bad private key pattern', interfaceExample, (data) => { data.interfaces[0].private_key = 'invalid'; }],
   ['listen_port 70000', interfaceExample, (data) => { data.interfaces[0].listen_port = 70000; }],
   ['mode bogus', interfaceExample, (data) => { data.interfaces[0].mode = 'bogus'; }],
+  ['obfuscation i1 invalid CPS', interfaceExample, (data) => { data.interfaces[0].obfuscation.i1 = 'abc'; }],
   ['persistent_keepalive 70000', probeExample, (data) => { data.interfaces[0].peers[0].persistent_keepalive = 70000; }],
   ['server listen_port 0', interfaceExample, (data) => { data.interfaces[0].listen_port = 0; }],
   ['hop bad backend_ip', example, (data) => { data.hop.routes[0].backend_ip = 'not-an-ip'; }],

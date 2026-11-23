@@ -246,8 +246,7 @@ async def test_bearer_auth_timeout_and_closed_agent(ssh_server, fake_agent, tmp_
 async def test_context_closes_forward_and_push_happy_path(ssh_server, fake_agent, tmp_path, session, crypto):
     node_db = create_node(session, "node", "127.0.0.1", "tester", ssh_port=ssh_server.port,
                           agent_port=fake_agent.port, agent_token=fake_agent.token, crypto=crypto)
-    instance = create_instance(session, "wg0", 12345, "10.0.0.1/24", obfuscation={"jc": 1, "jmin": 8, "jmax": 80,
-                          "s1": 1, "s2": 2, "s3": 3, "s4": 4, "h1": "1", "h2": "2", "h3": "3", "h4": "4"}, crypto=crypto)
+    instance = create_instance(session, "wg0", 12345, "10.0.0.1/24", crypto=crypto)
     place(session, instance.id, node_db.id, crypto=crypto)
     add_peer(session, instance.id, "peer", crypto=crypto)
     known = tmp_path / "known_hosts"

@@ -125,6 +125,11 @@ func (s State) Validate() error {
 			}
 		}
 		o := in.Obfuscation
+		for _, cps := range []struct{ name, value string }{{"i1", o.I1}, {"i2", o.I2}, {"i3", o.I3}, {"i4", o.I4}, {"i5", o.I5}} {
+			if err := validateCPS(cps.name, cps.value); err != nil {
+				return fmt.Errorf("interface %q: %s has invalid CPS syntax", in.Name, cps.name)
+			}
+		}
 		if o.JMin > o.JMax {
 			return fmt.Errorf("interface %s: jmin exceeds jmax", in.Name)
 		}

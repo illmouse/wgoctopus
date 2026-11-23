@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .awgparams import generate_obfuscation
+from .awgcps import generate_cps, validate_cps_chain
+from .awgparams import generate_obfuscation, validate_obfuscation
 from .crypto import Crypto
 from .keys import generate_keypair, generate_psk, next_free_peer_ip
 from .models import (
@@ -49,14 +50,34 @@ def _default_obfuscation(mtu=None):
 
 
 def create_instance(session: Session, name, listen_port, address, *, obfuscation=None, mtu=None,
+                    cps_profile=None, intensity="medium",
                     egress_interface=None, snat_ip=None, crypto=None):
     if not re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", name):
         raise ValueError("instance name must be a valid state interface name (1-15 characters)")
     ipaddress.ip_interface(address)
+    generated = obfuscation is None
+    if generated:
+        effective_mtu = mtu or 1500
+        obfuscation = _default_obfuscation(effective_mtu)
+        if cps_profile is not None and cps_profile != "none":
+            obfuscation.update({key: value for key, value in generate_cps(
+                cps_profile, mtu=effective_mtu, intensity=intensity
+            ).items() if value})
+    # Quality rules (S collisions, H range form, MTU) apply only to values we generate; explicit
+    # values (e.g. imported from an existing server) are accepted as the daemon accepts them and
+    # are fully checked by the agent on push. Only the CPS syntax is checked here.
+    try:
+        invalid = (generated and validate_obfuscation(obfuscation, mtu=mtu or 1500)) or validate_cps_chain(
+            {key: value for key, value in obfuscation.items() if key in {f"i{i}" for i in range(1, 6)}}
+        )
+    except (AttributeError, TypeError, ValueError):
+        invalid = True
+    if invalid:
+        raise ValueError("invalid obfuscation parameters")
     private, public = generate_keypair()
     instance = Instance(name=name, listen_port=listen_port, address=address,
                         private_key_enc=_crypto(crypto).encrypt(private), public_key=public,
-                        obfuscation=obfuscation if obfuscation is not None else _default_obfuscation(mtu), mtu=mtu,
+                        obfuscation=obfuscation, mtu=mtu,
                         egress_interface=egress_interface, snat_ip=snat_ip)
     with _transaction(session):
         session.add(instance)
@@ -298,7 +319,7 @@ def render_client_config(session: Session, peer_id, endpoint_host, *, dns=None, 
         lines.append(f"DNS = {dns}")
     names = {"jc": "Jc", "jmin": "Jmin", "jmax": "Jmax", **{f"s{i}": f"S{i}" for i in range(1, 5)},
              **{f"h{i}": f"H{i}" for i in range(1, 5)}, **{f"i{i}": f"I{i}" for i in range(1, 6)}}
-    lines.extend(f"{label} = {o[key]}" for key, label in names.items() if key in o)
+    lines.extend(f"{label} = {o[key]}" for key, label in names.items() if key in o and o[key] != "")
     lines.extend(["", "[Peer]", f"PublicKey = {instance.public_key}"])
     if peer.preshared_key_enc:
         lines.append(f"PresharedKey = {c.decrypt(peer.preshared_key_enc)}")

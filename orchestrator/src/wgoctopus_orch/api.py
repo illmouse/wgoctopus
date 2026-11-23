@@ -63,6 +63,8 @@ class InstanceIn(Strict):
     listen_port: int = Field(ge=1, le=65535)
     address: str
     obfuscation: dict | None = None
+    cps_profile: str | None = Field(default=None, pattern="^(none|quic_initial|tls_client_hello|dns_query|wireguard_noise|sip|random)$")
+    intensity: str = Field(default="medium", pattern="^(low|medium|high)$")
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
@@ -390,7 +392,14 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.post("/v1/instances", dependencies=[Depends(auth)], status_code=201)
     def create_instance(body: InstanceIn, s: Session=Depends(db)):
-        return inst(service.create_instance(s,body.name,body.listen_port,body.address,obfuscation=body.obfuscation,mtu=body.mtu,egress_interface=body.egress_interface,snat_ip=body.snat_ip,crypto=cipher),s)
+        try:
+            instance = service.create_instance(s, body.name, body.listen_port, body.address,
+                obfuscation=body.obfuscation, mtu=body.mtu, cps_profile=body.cps_profile,
+                intensity=body.intensity, egress_interface=body.egress_interface,
+                snat_ip=body.snat_ip, crypto=cipher)
+        except ValueError:
+            raise HTTPException(422, "invalid instance parameters") from None
+        return inst(instance, s)
 
     @app.get("/v1/instances", dependencies=[Depends(auth)])
     def list_instances(s: Session=Depends(db)): return [inst(i,s) for i in s.scalars(select(Instance)).all()]

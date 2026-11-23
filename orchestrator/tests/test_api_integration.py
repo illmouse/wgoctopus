@@ -77,8 +77,7 @@ async def test_active_standby_agents_receive_same_config(session, fake_agent_fac
     with TestClient(create_app(session_factory=sessions, reconciler=rec, crypto=crypto, migrate=False)) as client:
         client.headers["Authorization"] = "Bearer integration-token"
         nodes = [client.post("/v1/nodes", json={"name":f"agent-{i}","ssh_host":"127.0.0.1","ssh_user":"test","agent_port":agent.port,"agent_token":agent.token}).json() for i, agent in enumerate((a,b))]
-        obfuscation = {"jc":1,"jmin":1,"jmax":2,"s1":1,"s2":2,"s3":3,"s4":4,"h1":"1","h2":"2","h3":"3","h4":"4"}
-        instance = client.post("/v1/instances", json={"name":"wg0","listen_port":51820,"address":"10.0.0.1/24","obfuscation":obfuscation}).json()
+        instance = client.post("/v1/instances", json={"name":"wg0","listen_port":51820,"address":"10.0.0.1/24"}).json()
         for node, role in zip(nodes, ("active", "standby")):
             client.put(f"/v1/instances/{instance['id']}/placements/{node['id']}", json={"role":role}).raise_for_status()
         client.post(f"/v1/instances/{instance['id']}/peers", json={"name":"client"}).raise_for_status()

@@ -15,6 +15,8 @@ The normative JSON shape is [`schema/state.schema.json`](../schema/state.schema.
 - `egress_interface` — optional outbound Linux interface name (1–15 characters from `[A-Za-z0-9_=+.-]`); default-route interface is detected when omitted.
 - `snat_ip` — optional IPv4 or IPv6 source address; when omitted, MASQUERADE is used.
 - `obfuscation` — required AWG parameters: `jc`, `jmin`, `jmax`, `s1`–`s4`, and `h1`–`h4`; optional `i1`–`i5` strings. H fields are decimal strings or inclusive `min-max` ranges (for example `100-200`), as required by AWG 3.1 UAPI; S fields are 16-bit unsigned values.
+- Optional I1–I5 values are CPS signature packet sequences, limited to 4096 characters. Packets use the AWG forms `<b 0x...>`, `<t>`, `<c>`, `<r N>`, `<rc N>`, `<rd N>`, `<d>`, `<ds>`, or `<dz>`; numeric arguments must be 1–65535 and byte hex must have an even number of digits.
+- Empty I1–I5 values are valid (unset); malformed non-empty values are rejected by agent validation before reaching the daemon.
 - `peers` — complete desired peer set for this interface. `public_key` must be unique within the array; schema-level uniqueness of an object property is not expressible in JSON Schema.
 - `peers[].public_key` — base64 encoding of exactly 32 key bytes.
 - `peers[].endpoint` — optional IP-literal endpoint in host:port form (IPv4 or bracketed IPv6); hostnames are not allowed.

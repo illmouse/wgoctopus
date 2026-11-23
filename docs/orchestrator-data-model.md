@@ -30,7 +30,7 @@ Instance private keys, peer private keys, peer preshared keys, and node bearer t
 
 One UDP port belongs to each instance and is reused by its rendered node interface and client endpoint. Node egress/SNAT overrides take precedence over instance defaults. Interface names must meet the agent's 1–15 character syntax. Desired revisions only increase when rendered state content changes; observed agent state is updated independently. Rendering a disabled node remains supported; callers decide whether it should be contacted.
 
-Instances created without explicit obfuscation receive randomized AWG 2.0-compatible `Jc/Jmin/Jmax`, `S1-S4`, and non-overlapping ranged `H1-H4` values. AWG 3.0/3.1 generation is supported by the pure parameter generator with the 12-byte S floor; 3.1 callers should select MTU 1280. Explicit API obfuscation remains untouched. Profile fields (I1-I5) and additional 3.x flags are tracked separately.
+Instances created without explicit obfuscation receive randomized AWG 2.0-compatible `Jc/Jmin/Jmax`, `S1-S4`, and non-overlapping ranged `H1-H4` values. AWG 3.0/3.1 generation is supported by the pure parameter generator with the 12-byte S floor; 3.1 callers should select MTU 1280. Explicit API obfuscation remains untouched. CPS profiles are applied only at instance creation; rotating CPS later is a dangerous change that requires `allow_dangerous`, because clients must be updated to match.
 
 Peer allocation walks addresses in the instance subnet, skips the server interface address and addresses already assigned to peers, and raises when exhausted. IPv4 client addresses render as `/32` and IPv6 as `/128`.
 

@@ -57,7 +57,8 @@ def render_node_state(session: Session, node_id: int, crypto: Crypto | None = No
             "listen_port": instance.listen_port,
             "private_key": str(crypto.decrypt(instance.private_key_enc)),
             "address": instance.address,
-            "obfuscation": instance.obfuscation,
+            "obfuscation": {key: value for key, value in instance.obfuscation.items()
+                            if not (key in {f"i{i}" for i in range(1, 6)} and value == "")},
             "peers": [],
         }
         for field in ("mtu", "egress_interface", "snat_ip"):
@@ -88,7 +89,8 @@ def render_node_state(session: Session, node_id: int, crypto: Crypto | None = No
             "listen_port": 0,
             "private_key": str(crypto.decrypt(peer.private_key_enc)),
             "address": f"{peer.allowed_ip}/32",
-            "obfuscation": instance.obfuscation,
+            "obfuscation": {key: value for key, value in instance.obfuscation.items()
+                            if not (key in {f"i{i}" for i in range(1, 6)} and value == "")},
             "peers": [{
                 "public_key": instance.public_key,
                 "allowed_ips": [f"{server_ip}/32"],

@@ -21,7 +21,7 @@ async def fake_agent():
 
 def setup(session, agent, crypto):
     node = create_node(session, "node", "127.0.0.1", "test", agent_port=agent.port, agent_token=agent.token, crypto=crypto)
-    instance = create_instance(session, "wg0", 12345, "10.0.0.1/24", obfuscation={"jc": 1, "jmin": 8, "jmax": 80, "s1": 1, "s2": 2, "s3": 3, "s4": 4, "h1": "1", "h2": "2", "h3": "3", "h4": "4"}, crypto=crypto)
+    instance = create_instance(session, "wg0", 12345, "10.0.0.1/24", crypto=crypto)
     place(session, instance.id, node.id, crypto=crypto)
     peer = add_peer(session, instance.id, "peer", crypto=crypto)
     session.flush()
