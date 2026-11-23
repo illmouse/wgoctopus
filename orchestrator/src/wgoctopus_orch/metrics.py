@@ -14,7 +14,7 @@ def escape_label(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None) -> str:
+def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None) -> str:
     lines = []
 
     def sample(name, labels, value):
@@ -23,6 +23,16 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None)
 
     def family(name, kind, help_text):
         lines.extend((f"# HELP {name} {help_text}", f"# TYPE {name} {kind}"))
+
+    family("wgoctopus_alerts_enabled", "gauge", "Whether alert delivery is enabled.")
+    family("wgoctopus_alerts_sent_total", "counter", "Alerts sent.")
+    family("wgoctopus_alerts_failed_total", "counter", "Alert delivery failures.")
+    family("wgoctopus_alerts_dropped_total", "counter", "Alerts dropped or suppressed.")
+    family("wgoctopus_alerts_pending", "gauge", "Alerts pending delivery.")
+    alert_counts = alerts.counters() if alerts else {}
+    sample("wgoctopus_alerts_enabled", {}, int(alerts is not None))
+    for metric, key in (("wgoctopus_alerts_sent_total", "sent"), ("wgoctopus_alerts_failed_total", "failed"), ("wgoctopus_alerts_dropped_total", "dropped"), ("wgoctopus_alerts_pending", "pending")):
+        sample(metric, {}, alert_counts.get(key, 0))
 
     family("wgoctopus_build_info", "gauge", "Orchestrator build information.")
     sample("wgoctopus_build_info", {"version": version}, 1)

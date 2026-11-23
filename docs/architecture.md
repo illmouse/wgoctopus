@@ -64,3 +64,17 @@ The HTTP API exposes the synchronous service layer at `/v1`. FastAPI owns a SQLA
 # Monitoring environment
 
 `WGOCTOPUS_METRICS_PUBLIC` defaults to `false`; set it to `true` to disable bearer authentication on `/metrics` only. Restrict public metrics at the network boundary.
+# Alerts
+
+The alert dispatcher reads persisted events and delivers plain-text Telegram notifications for node, probe, and switch events. Its `alert_state` cursor prevents historical replay; it supports flap suppression and a per-minute rate limit. Promotion confirmation buttons are part of the failover stage.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WGOCTOPUS_TELEGRAM_TOKEN` / `_FILE` | unset | Telegram bot token; file wins |
+| `WGOCTOPUS_TELEGRAM_CHAT_ID` | unset | Destination chat |
+| `WGOCTOPUS_TELEGRAM_API_BASE` | `https://api.telegram.org` | Telegram API base |
+| `WGOCTOPUS_ALERTS_ENABLED` | `auto` | `auto`, `true`, or `false` |
+| `WGOCTOPUS_ALERT_DELAY_SECONDS` | `60` | Flap suppression delay |
+| `WGOCTOPUS_ALERT_MAX_PER_MINUTE` | `20` | Delivery limit |
+| `WGOCTOPUS_ALERT_POLL_SECONDS` | `5` | Event polling interval |
+| `WGOCTOPUS_ALERT_KINDS` | empty | Optional comma-separated event kinds |

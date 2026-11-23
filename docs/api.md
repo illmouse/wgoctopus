@@ -16,6 +16,10 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | POST/GET `/v1/probes`; GET/DELETE `/v1/probes/{id}` | Synthetic probe lifecycle |
 | GET `/healthz`; GET `/readyz` | Public liveness and readiness probes |
 | GET `/metrics` | Prometheus text exposition (0.0.4) |
+| GET `/v1/alerts` | Alert enablement and delivery counters |
+| POST `/v1/alerts/test` | Send a test notification (202); 409 when disabled, 502 on delivery failure |
+
+Alert endpoints require bearer authentication. Responses never include Telegram credentials or chat identifiers.
 
 ### Monitoring
 

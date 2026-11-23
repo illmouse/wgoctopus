@@ -121,3 +121,9 @@ class Event(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     subject: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class AlertState(Base):
+    __tablename__ = "alert_state"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)

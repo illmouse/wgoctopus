@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import service
+from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
@@ -152,11 +153,12 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
     enabled = os.getenv("WGOCTOPUS_RECONCILER_ENABLED", "true").lower() == "true"
+    alert_settings = Settings.from_env()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -170,13 +172,27 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             app.state.reconciler = build_reconciler(__import__("wgoctopus_orch.config", fromlist=["Settings"]).Settings.from_env(), sessions)
         else:
             app.state.reconciler = reconciler
+        if alerts is not None:
+            app.state.alerts = alerts
+        elif alert_settings.alerts_enabled:
+            app.state.alerts = AlertDispatcher(sessions, notifier or TelegramNotifier(
+                alert_settings.telegram_token, alert_settings.telegram_chat_id,
+                api_base=alert_settings.telegram_api_base), delay_seconds=alert_settings.alert_delay_seconds,
+                max_per_minute=alert_settings.alert_max_per_minute, poll_seconds=alert_settings.alert_poll_seconds,
+                kinds=alert_settings.alert_kinds)
+        else:
+            app.state.alerts = None
         stop = __import__("asyncio").Event()
         task = __import__("asyncio").create_task(app.state.reconciler.run(stop)) if app.state.reconciler else None
+        alert_task = __import__("asyncio").create_task(app.state.alerts.run(stop)) if app.state.alerts else None
         yield
         if task:
             stop.set()
             app.state.reconciler._kick.set()
             await task
+        if alert_task:
+            stop.set()
+            await alert_task
         if engine:
             engine.dispose()
 
@@ -186,6 +202,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     app.state.sessions = sessions
     app.state.crypto = cipher
     app.state.reconciler = reconciler
+    app.state.alerts = alerts
     token = _token()
     allow_no_auth = os.getenv("WGOCTOPUS_API_ALLOW_NO_AUTH", "false").lower() == "true"
     if not token and not allow_no_auth:
@@ -211,7 +228,22 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/metrics", response_class=Response)
     def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):
-        return Response(render_metrics(s, app.state.reconciler), media_type="text/plain; version=0.0.4; charset=utf-8")
+        return Response(render_metrics(s, app.state.reconciler, alerts=app.state.alerts), media_type="text/plain; version=0.0.4; charset=utf-8")
+
+    @app.get("/v1/alerts", dependencies=[Depends(auth)])
+    def alerts_status():
+        dispatcher = app.state.alerts
+        return {"enabled": dispatcher is not None, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
+
+    @app.post("/v1/alerts/test", status_code=202, dependencies=[Depends(auth)])
+    async def alert_test():
+        if app.state.alerts is None:
+            raise HTTPException(409, "alerts disabled")
+        try:
+            await app.state.alerts.send_test()
+        except NotifyError:
+            raise HTTPException(502, "notification failed") from None
+        return {"sent": True}
 
     def kick(session, node_ids):
         reconciler_obj = app.state.reconciler

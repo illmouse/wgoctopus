@@ -27,3 +27,6 @@ Hop nodes have no instance placements and render an empty `interfaces` array. Fo
 ## Probes
 
 A probe's identity is a normal `peers` row owned by `__probe__`; its encrypted private key and PSK are used on the runner, while its public key and `/32` allowed IP render as a regular server-side peer. The runner receives a client interface named `wgp<probe-id>` with ephemeral listen port `0`. Its endpoint is derived from the linked hop's `hop_ip` and instance `listen_port` (`hop_ip:listen_port`), so the handshake exercises the client-to-hop-to-active-node path. If the runner is also the active instance node, its probe `/32` address coexists with the instance `/24`; a standby or different node is recommended for an independent view.
+# Alert state
+
+`alert_state` stores dispatcher cursors (currently `last_event_id`) so event processing resumes after restart without replaying history.
