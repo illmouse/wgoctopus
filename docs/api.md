@@ -109,3 +109,7 @@ Used by the peer-management bot; all endpoints need the admin bearer token. User
 - `POST /v1/users/{username}/disable` `{by}` / `enable`: disables or enables all owned devices (admins cannot be disabled); node revisions are bumped and reconciled.
 - `POST|GET /v1/requests` (`type` access|limit), `GET /v1/requests/{id}`, `POST /v1/requests/{id}/approve` `{admin_tg_id, admin_username, default_limit}` / `decline`, `PUT /v1/requests/{id}/refs` `{refs: [[chat_id, message_id], ...]}`. Decisions are atomic; a second decision returns 409.
 - `GET /v1/users/{username}/devices`, `POST /v1/users/{username}/devices` `{instance_id, name?, admin_bypass?}` (403 at the device limit, 409 duplicate name, auto name = 8 hex chars), `GET|PATCH|DELETE /v1/devices/{id}` (PATCH: `name`, `enabled`). `GET /v1/devices` lists devices with optional `owner`, `enabled`, and scrape-derived `active` filters, plus `limit` (default 50, max 200) and `offset`; response is `{total, items}` ordered by peer id. Device objects include `latest_handshake_at`, `rx`, `tx` and `active` (handshake within 180 s) from the cached node scrapes. The client config is `GET /v1/peers/{id}/config`.
+
+## OIDC endpoints
+
+`GET /auth/methods` (`{local, oidc}`), `GET /auth/oidc/login`, `GET /auth/oidc/callback`; see [web-ui.md](web-ui.md#oidc-login) for the `WGOCTOPUS_OIDC_*` settings. They are cookie/redirect based and not part of the bearer-token API.

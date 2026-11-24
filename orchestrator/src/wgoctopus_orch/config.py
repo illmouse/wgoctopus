@@ -65,6 +65,18 @@ class Settings:
     web_cookie_secure: bool = True
     web_admin_username: str = "admin"
     web_admin_password: str | None = field(default=None, repr=False)
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = field(default=None, repr=False)
+    oidc_redirect_url: str | None = None
+    oidc_scopes: str = "openid profile email groups"
+    oidc_groups_claim: str = "groups"
+    oidc_username_claim: str = "preferred_username"
+    oidc_role_map: str = ""
+
+    @property
+    def oidc_enabled(self):
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_redirect_url and self.oidc_role_map)
 
     @property
     def telegram_buttons_enabled(self):
@@ -165,6 +177,17 @@ class Settings:
                 web_password = Path(password_file).read_text().strip()
             except OSError as exc:
                 raise ValueError("cannot read WGOCTOPUS_WEB_ADMIN_PASSWORD_FILE") from exc
+        oidc_secret = os.getenv("WGOCTOPUS_OIDC_CLIENT_SECRET")
+        oidc_secret_file = os.getenv("WGOCTOPUS_OIDC_CLIENT_SECRET_FILE")
+        if oidc_secret_file:
+            try:
+                oidc_secret = Path(oidc_secret_file).read_text().strip()
+            except OSError as exc:
+                raise ValueError("cannot read WGOCTOPUS_OIDC_CLIENT_SECRET_FILE") from exc
+        oidc_role_map = os.getenv("WGOCTOPUS_OIDC_ROLE_MAP", "")
+        if oidc_role_map:
+            from .oidc import parse_role_map
+            parse_role_map(oidc_role_map)
         return cls(**{**settings.__dict__, "pull_listen": pull_listen,
                       "pull_host_key_file": os.getenv("WGOCTOPUS_PULL_HOST_KEY_FILE"),
                       "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20")),
@@ -176,4 +199,12 @@ class Settings:
                       "web_session_idle": int(os.getenv("WGOCTOPUS_WEB_SESSION_IDLE", "3600")),
                       "web_cookie_secure": secure != "false",
                       "web_admin_username": os.getenv("WGOCTOPUS_WEB_ADMIN_USERNAME", "admin"),
-                      "web_admin_password": web_password})
+                      "web_admin_password": web_password,
+                      "oidc_issuer": os.getenv("WGOCTOPUS_OIDC_ISSUER") or None,
+                      "oidc_client_id": os.getenv("WGOCTOPUS_OIDC_CLIENT_ID") or None,
+                      "oidc_client_secret": oidc_secret or None,
+                      "oidc_redirect_url": os.getenv("WGOCTOPUS_OIDC_REDIRECT_URL") or None,
+                      "oidc_scopes": os.getenv("WGOCTOPUS_OIDC_SCOPES", "openid profile email groups"),
+                      "oidc_groups_claim": os.getenv("WGOCTOPUS_OIDC_GROUPS_CLAIM", "groups"),
+                      "oidc_username_claim": os.getenv("WGOCTOPUS_OIDC_USERNAME_CLAIM", "preferred_username"),
+                      "oidc_role_map": oidc_role_map})

@@ -81,3 +81,5 @@ Offline AmneziaWG and wg-easy imports are available with `python -m wgoctopus_or
 | `WGOCTOPUS_TELEGRAM_POLL_TIMEOUT` | `25` | Long-poll timeout in seconds. |
 
 When deploying the separate `bot/` module, keep orchestrator polling off (`WGOCTOPUS_TELEGRAM_BUTTONS=false`) and set `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS=true`; only the bot module should poll `getUpdates`.
+
+OIDC login is configured with `WGOCTOPUS_OIDC_ISSUER`, `WGOCTOPUS_OIDC_CLIENT_ID`, `WGOCTOPUS_OIDC_CLIENT_SECRET[_FILE]`, `WGOCTOPUS_OIDC_REDIRECT_URL`, `WGOCTOPUS_OIDC_ROLE_MAP` (optional: `_SCOPES`, `_GROUPS_CLAIM`, `_USERNAME_CLAIM`); see docs/web-ui.md.

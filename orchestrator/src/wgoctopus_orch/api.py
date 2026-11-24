@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import bootstrap, service, webauth
+from . import oidc as oidc_mod
 from . import service_users as users
 from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
@@ -260,7 +261,7 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None, pull_server=None, provision=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None, pull_server=None, provision=None, oidc_transport=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
@@ -461,6 +462,52 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             token, csrf = app_web_sessions.create(account.id, ip)
             response.set_cookie("wgoctopus_session", token, httponly=True, samesite="lax", path="/", secure=alert_settings.web_cookie_secure, max_age=alert_settings.web_session_ttl)
             return {"username": account.username, "role": account.role, "csrf_token": csrf}
+
+        app.state.oidc = oidc_mod.OidcProvider(alert_settings, transport=oidc_transport) if alert_settings.oidc_enabled else None
+
+        @app.get("/auth/oidc/login")
+        async def oidc_login(response: Response):
+            if app.state.oidc is None:
+                raise HTTPException(404, detail={"error": "not_found"})
+            try:
+                url, state = await app.state.oidc.start()
+            except oidc_mod.OidcError:
+                raise HTTPException(502, detail={"error": "oidc_unavailable"}) from None
+            response = Response(status_code=303, headers={"Location": url, "Cache-Control": "no-store"})
+            response.set_cookie("wgoctopus_oidc", state, httponly=True, samesite="lax", path="/auth/oidc", secure=alert_settings.web_cookie_secure, max_age=oidc_mod.PENDING_TTL)
+            return response
+
+        @app.get("/auth/oidc/callback")
+        async def oidc_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+            if app.state.oidc is None:
+                raise HTTPException(404, detail={"error": "not_found"})
+
+            def deny(reason, status=403):
+                with sessions.begin() as session:
+                    service._event(session, "web.login_denied", "-", {"reason": reason, "source": "oidc"})
+                raise HTTPException(status, detail={"error": "oidc_denied"})
+            if error:
+                deny("idp_error")
+            try:
+                identity = await app.state.oidc.finish(code, state, request.cookies.get("wgoctopus_oidc"))
+            except oidc_mod.OidcError as exc:
+                deny(exc.code, 502 if exc.code in {"discovery_failed", "jwks_failed", "token_exchange_failed"} else 403)
+            with sessions() as session:
+                try:
+                    account = webauth.login_oidc(session, identity)
+                    session.commit()
+                except webauth.WebAuthError:
+                    raise HTTPException(403, detail={"error": "oidc_denied"}) from None
+                account_id = account.id
+            token, _csrf = app_web_sessions.create(account_id, request.client.host if request.client else "")
+            response = Response(status_code=303, headers={"Location": "/", "Cache-Control": "no-store"})
+            response.set_cookie("wgoctopus_session", token, httponly=True, samesite="lax", path="/", secure=alert_settings.web_cookie_secure, max_age=alert_settings.web_session_ttl)
+            response.delete_cookie("wgoctopus_oidc", path="/auth/oidc")
+            return response
+
+        @app.get("/auth/methods")
+        def web_methods():
+            return {"local": True, "oidc": app.state.oidc is not None}
 
         @app.get("/auth/me")
         def web_me(request: Request):

@@ -86,4 +86,21 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3a local accounts done, 7.3b OIDC pending); 7.4 web UI pages; k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages; k3s manifests and backups.
+
+
+## OIDC login
+
+Authorization code flow with PKCE (S256). Enabled when `WGOCTOPUS_OIDC_ISSUER`, `_CLIENT_ID`, `_REDIRECT_URL` (the public URL of `/auth/oidc/callback`) and `_ROLE_MAP` are set.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WGOCTOPUS_OIDC_ISSUER` | - | Issuer URL; endpoints come from `/.well-known/openid-configuration` and must share its scheme and `issuer` value. |
+| `WGOCTOPUS_OIDC_CLIENT_ID`, `WGOCTOPUS_OIDC_CLIENT_SECRET[_FILE]` | - | Confidential client credentials (secret via `client_secret_post`; file wins). |
+| `WGOCTOPUS_OIDC_REDIRECT_URL` | - | Registered redirect URI. |
+| `WGOCTOPUS_OIDC_SCOPES` | `openid profile email groups` | Requested scopes. |
+| `WGOCTOPUS_OIDC_GROUPS_CLAIM` | `groups` | ID-token claim with the group list. |
+| `WGOCTOPUS_OIDC_USERNAME_CLAIM` | `preferred_username` | Account name; falls back to `email`, then `sub`. |
+| `WGOCTOPUS_OIDC_ROLE_MAP` | - | `group=role` pairs, e.g. `wg-admins=admin,wg-ops=operator`; highest matching role wins; no match = denied. |
+
+Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bound to a short-lived HttpOnly cookie), `GET /auth/oidc/callback` (verifies state, exchanges the code with the PKCE verifier, validates the ID token: RS/ES/PS algorithms only, signature via JWKS with one refetch on unknown key, `iss`, `aud`, `exp`, `iat`, `nonce`; then creates a session and redirects to `/`). Accounts are provisioned at the first login (`source=oidc`, no password) and the role is re-evaluated on every login. A disabled account, a name already used by another account, or a missing group mapping is denied (event `web.login_denied` with a reason, no tokens or claims logged). Failures return generic `oidc_denied` (403) or 502 for IdP/network errors.

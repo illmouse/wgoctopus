@@ -205,3 +205,27 @@ def delete_account(session, account):
 
 def list_accounts(session):
     return session.scalars(select(WebAccount).order_by(WebAccount.username)).all()
+
+
+def login_oidc(session, identity):
+    """Create or refresh the account behind an OIDC identity; the role follows the groups on every login."""
+    account = session.scalar(select(WebAccount).where(WebAccount.source == "oidc", WebAccount.subject == identity.subject))
+    if account is None:
+        if session.scalar(select(WebAccount.id).where(WebAccount.username == identity.username)):
+            _event(session, "web.login_denied", identity.username, {"reason": "username_taken"})
+            session.commit()
+            raise WebAuthError("conflict")
+        account = WebAccount(username=identity.username, role=identity.role, source="oidc", subject=identity.subject)
+        session.add(account)
+        session.flush()
+        _event(session, "web_account.created", account.username, {"source": "oidc"})
+    elif not account.enabled:
+        _event(session, "web.login_denied", account.username, {"reason": "disabled"})
+        session.commit()
+        raise WebAuthError("disabled")
+    if account.role != identity.role:
+        account.role = identity.role
+        _event(session, "web_account.updated", account.username, {"source": "oidc"})
+    account.last_login_at = datetime.now(UTC)
+    _event(session, "web.login", account.username, {"source": "oidc"})
+    return account
