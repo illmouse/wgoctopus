@@ -107,7 +107,7 @@ def redact(text, secrets):
 
 
 OPTION_TYPES = {"mgmt_user": str, "image": str, "image_archive": str, "force_image": bool, "pull_server": str,
-                "pull_host_key": str, "health_attempts": int, "health_interval": (int, float), "auto": bool}
+                "pull_host_key": str, "health_attempts": int, "health_interval": (int, float), "auto": bool, "login_user": str}
 
 
 def validate_options(options):
@@ -163,6 +163,10 @@ class ProvisionRunner:
             snapshot = {k: getattr(node, k) for k in ("id", "name", "kind", "ssh_host", "ssh_port", "ssh_user", "mgmt_mode", "agent_port", "agent_token_enc")}
             job.state, job.started_at = "running", now_utc()
             options = dict(job.options or {})
+            node_po = dict(node.provision_options or {})
+            login = options.get("login_user") or node_po.get("login_user")
+            if login:
+                snapshot["ssh_user"] = login
         subject = snapshot["name"]
         self._event("provision.started", subject, {"job_id": job_id})
         try:
@@ -207,6 +211,9 @@ class ProvisionRunner:
                 node_row = s.get(Node, snapshot["id"])
                 if node_row is not None:
                     if ctx.extra.get("new_ssh_user"):
+                        po = dict(node_row.provision_options or {})
+                        po.setdefault("login_user", snapshot["ssh_user"])
+                        node_row.provision_options = po
                         node_row.ssh_user = ctx.extra["new_ssh_user"]
                     if ctx.extra.get("pull_public_key"):
                         node_row.pull_public_key = ctx.extra["pull_public_key"]

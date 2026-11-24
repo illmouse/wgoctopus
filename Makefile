@@ -1,7 +1,7 @@
-.PHONY: help schema-check schema-validate ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull orch-test orch-lint
+.PHONY: help schema-check schema-validate ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull e2e-orch-provision orch-test orch-lint
 
 help:
-	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull HOST=.. orch-test orch-lint bot-test bot-lint bot-image'
+	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull e2e-orch-provision HOST=.. orch-test orch-lint bot-test bot-lint bot-image'
 
 e2e:
 	@./scripts/e2e.sh local
@@ -36,6 +36,10 @@ e2e-orch-failover:
 e2e-orch-pull:
 	@test -n "$(HOST)" || { printf '%s\n' 'Usage: make e2e-orch-pull HOST=root@host' >&2; exit 2; }
 	@./scripts/e2e-orch-pull.sh "$(HOST)"
+
+e2e-orch-provision:
+	@test -n "$(HOST)" || { printf '%s\n' 'Usage: make e2e-orch-provision HOST=root@host' >&2; exit 2; }
+	@./scripts/e2e-orch-provision.sh "$(HOST)"
 
 schema-check:
 	@if command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then \

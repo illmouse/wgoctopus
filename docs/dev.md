@@ -88,4 +88,6 @@ volumes:
 
 ## Pull-mode e2e
 
+`make e2e-orch-provision HOST=root@host` needs an empty host with Docker installed: the local orchestrator provisions it over SSH (agent image delivered via `docker load` from an archive, restricted management user, token file, agent container), reconciles the node through the restricted user, checks that re-provisioning is idempotent (same container, steps skipped, login as the original `login_user`), and cleans the host.
+
 `make e2e-orch-pull HOST=root@host` starts a local orchestrator with `WGOCTOPUS_PULL_LISTEN`, forwards that listener to the host with `ssh -R`, and runs a real agent there with `--pull-*` flags. It checks connect/deny, reconciliation only through the tunnel, reconnect after orchestrator and agent restarts, `auto` fallback from a closed SSH port, loss/recovery of the tunnel, and host cleanup (firewall baseline and containers unchanged).

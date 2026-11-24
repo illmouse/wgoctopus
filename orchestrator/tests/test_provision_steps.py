@@ -171,6 +171,21 @@ async def test_mgmt_user_and_pull_mode_persist_on_node(session, crypto, tmp_path
     session.expire_all()
     row = session.scalar(select(Node).where(Node.name == "pull1"))
     assert row.ssh_user == "wgoctopus" and row.pull_public_key == "ssh-ed25519 AAAAnodekey"
+    assert row.provision_options["login_user"] == "root"
+
+    # Re-provisioning must log in as the original user, not the restricted management user.
+    seen = []
+
+    async def opener(node, st):
+        seen.append(node.ssh_user)
+        return host
+
+    again = ProvisionRunner(factory_for(session), crypto, Settings(ssh_key_file=str(key_file)), opener, STEPS)
+    opts = {"health_interval": 0, "mgmt_user": "wgoctopus", "pull_server": "198.51.100.9:2222",
+            "pull_host_key": "SHA256:" + "A" * 43, "login_user": "root"}
+    job = again.create_job(node.id, opts)
+    await again.run_job(job)
+    assert again.job_view(job)["state"] == "succeeded" and seen == ["root"]
 
 
 @pytest.mark.asyncio
