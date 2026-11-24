@@ -20,7 +20,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import service
+from . import bootstrap, service
 from . import service_users as users
 from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
@@ -276,6 +276,16 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 except Exception:
                     log.exception("Database migration failed")
                     raise
+            app.state.bootstrap_last_apply = None
+            if alert_settings.bootstrap_file and alert_settings.bootstrap_apply:
+                try:
+                    doc = bootstrap.load_yaml(Path(alert_settings.bootstrap_file).read_text())
+                    result = bootstrap.apply_bootstrap(sessions, doc, crypto=cipher)
+                    app.state.bootstrap_last_apply = {"at": time.time(), "ok": True, "summary": {k: sum(map(len, getattr(result, k).values())) for k in ("created", "updated", "unchanged", "pruned")}}
+                except Exception as exc:
+                    paths = exc.errors if isinstance(exc, bootstrap.BootstrapError) else ["/"]
+                    log.error("Bootstrap failed at paths: %s", ", ".join(paths))
+                    raise
             if pull_server is not None:
                 app.state.pull_server = pull_server
             elif alert_settings.pull_listen:
@@ -358,6 +368,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     app.state.alerts = alerts
     app.state.telegram_bot = bot
     app.state.pull_server = pull_server
+    app.state.bootstrap_last_apply = None
     token = _token()
     allow_no_auth = os.getenv("WGOCTOPUS_API_ALLOW_NO_AUTH", "false").lower() == "true"
     if not token and not allow_no_auth:
@@ -380,6 +391,37 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if token and (not authorization or not authorization.startswith("Bearer ") or
                       not hmac.compare_digest(authorization[7:], token)):
             raise HTTPException(401, "authentication required", headers={"WWW-Authenticate": "Bearer"})
+
+    @app.get("/v1/bootstrap", dependencies=[Depends(auth)])
+    def bootstrap_status():
+        return {"configured": bool(alert_settings.bootstrap_file),
+                "file": Path(alert_settings.bootstrap_file).name if alert_settings.bootstrap_file else None,
+                "last_apply": app.state.bootstrap_last_apply}
+
+    @app.post("/v1/bootstrap/apply", dependencies=[Depends(auth)])
+    def bootstrap_apply(body: dict = Body(default={})):
+        configured = alert_settings.bootstrap_file
+        if body.keys() - {"dry_run", "document"} or not isinstance(body.get("dry_run", False), bool):
+            raise HTTPException(422, detail={"error": "validation_error", "detail": ["/"]})
+        if "document" in body:
+            document = body["document"]
+        elif configured:
+            try: document = bootstrap.load_yaml(Path(configured).read_text())
+            except OSError: raise HTTPException(422, detail={"error": "validation_error", "detail": ["/"]}) from None
+        else:
+            raise HTTPException(404, "bootstrap not configured")
+        try:
+            result = bootstrap.apply_bootstrap(sessions, document, crypto=cipher, dry_run=body.get("dry_run", False))
+        except bootstrap.BootstrapError as exc:
+            return JSONResponse(status_code=422, content={"error": "validation_error", "detail": exc.errors})
+        report = {key: getattr(result, key) for key in ("created", "updated", "unchanged", "pruned", "warnings")}
+        if not body.get("dry_run", False):
+            affected = []
+            with sessions() as session:
+                affected = session.scalars(select(Node.id).where(Node.name.in_([*{r.get("node") for r in document.get("placements", [])}, *{r.get("hop") for r in document.get("hop_links", [])}]))).all()
+                kick(session, affected)
+            app.state.bootstrap_last_apply = {"at": time.time(), "ok": True, "summary": {k: sum(map(len, report[k].values())) for k in ("created", "updated", "unchanged", "pruned")}}
+        return report
 
     @app.get("/metrics", response_class=Response)
     def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):

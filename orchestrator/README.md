@@ -59,6 +59,8 @@ Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPU
 | `WGOCTOPUS_RECONCILER_ENABLED` | true | Run reconciler within API process |
 | `WGOCTOPUS_AUTO_MIGRATE` | true | Migrate on application startup |
 | `WGOCTOPUS_CLIENT_ENDPOINT_HOST` | unset | Default client config endpoint |
+| `WGOCTOPUS_BOOTSTRAP_FILE` | unset | Optional declarative YAML bootstrap file |
+| `WGOCTOPUS_BOOTSTRAP_APPLY` | true | Apply configured bootstrap file at startup |
 
 Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
 

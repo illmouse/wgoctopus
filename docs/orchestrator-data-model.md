@@ -22,6 +22,7 @@ SQLAlchemy 2.x models are migrated by Alembic into one SQLite database (WAL and 
 | Table | Purpose |
 |---|---|
 | `instances` | Shared server interface, listen port, CIDR, keys, AWG obfuscation, and optional network defaults. |
+| `bootstrap_managed` | Names of instances, nodes and users owned by declarative bootstrap and eligible for pruning. |
 | `nodes` | Management connection metadata, agent token, node network overrides, enablement, and `kind` (`awg` or `hop`). Hop nodes also store `wan_interface` and IPv4 `hop_ip`; `backend_ip` is the IPv4 address DNAT targets (the public reachable address for an AWG node). |
 | `nodes.pull_public_key` | Nullable OpenSSH public key line used to authenticate pull-mode agents. |
 | `placements` | Instance-to-node placement, active/standby role, and weight; both roles render the complete interface configuration. |

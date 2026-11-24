@@ -39,7 +39,7 @@ instances:
   - name: awg-main
     listen_port: 13440
     address: 10.100.0.1/24
-    awg_version: "3.1"      # generator used only when keys/obfuscation are omitted
+    awg_version: "3.1"      # generation settings used only at creation
     cps_profile: quic_initial
     endpoint_host: vpn.example.org
     mtu: 1280
@@ -47,15 +47,13 @@ nodes:
   - name: node-1
     kind: awg               # awg | hop
     mgmt_mode: push         # push | pull | auto
-    ssh: {host: 203.0.113.10, port: 22, user: root, key: {file: /run/secrets/provision-key}}
+    ssh: {host: 203.0.113.10, port: 22, user: root}
     backend_ip: 203.0.113.10
-    provision: true         # install Docker + agent over SSH if not yet done
   - name: hop-1
     kind: hop
     wan_interface: eth0
     hop_ip: 198.51.100.5
-    ssh: {host: 198.51.100.5, user: root, key: {file: /run/secrets/provision-key}}
-    provision: true
+    ssh: {host: 198.51.100.5, user: root}
 placements:
   - {instance: awg-main, node: node-1, role: active}
 hop_links:
@@ -64,7 +62,7 @@ users:                      # bot users
   - {username: alice, role: admin}
 ```
 
-Rules: validated against a JSON schema before anything is written; applied in one transaction (provisioning jobs are started after commit); re-applying an unchanged file is a no-op; imported private keys are only accepted through the offline import CLI, bootstrap generates keys for new instances.
+Rules: strict schema validation runs before writes; re-applying unchanged data is a no-op; imported private keys are only accepted through the offline import CLI. SSH key and host provisioning fields arrive in stage 7.2.
 
 ## Host provisioning over SSH
 

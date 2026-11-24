@@ -56,6 +56,8 @@ class Settings:
     pull_listen: str = ""
     pull_host_key_file: str | None = None
     pull_login_timeout: float = 20
+    bootstrap_file: str | None = None
+    bootstrap_apply: bool = True
 
     @property
     def telegram_buttons_enabled(self):
@@ -142,6 +144,11 @@ class Settings:
             raise ValueError("WGOCTOPUS_PULL_LISTEN must be host:port")
         if pull_listen and int(pull_listen.rsplit(":", 1)[1]) > 65535:
             raise ValueError("WGOCTOPUS_PULL_LISTEN port must be <= 65535")
+        bootstrap_apply = os.getenv("WGOCTOPUS_BOOTSTRAP_APPLY", "true").lower()
+        if bootstrap_apply not in {"true", "false"}:
+            raise ValueError("WGOCTOPUS_BOOTSTRAP_APPLY must be true or false")
         return cls(**{**settings.__dict__, "pull_listen": pull_listen,
                       "pull_host_key_file": os.getenv("WGOCTOPUS_PULL_HOST_KEY_FILE"),
-                      "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20"))})
+                      "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20")),
+                      "bootstrap_file": os.getenv("WGOCTOPUS_BOOTSTRAP_FILE") or None,
+                      "bootstrap_apply": bootstrap_apply == "true"})
