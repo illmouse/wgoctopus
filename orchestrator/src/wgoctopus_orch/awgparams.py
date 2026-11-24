@@ -5,6 +5,7 @@ For AWG 3.1 callers should default MTU to 1280; that is a caller concern.
 """
 from __future__ import annotations
 
+import base64
 import secrets
 from collections.abc import Callable
 
@@ -49,7 +50,7 @@ def _sizes(version: str, rnd: Rnd) -> tuple[int, int, int, int]:
 
 def generate_obfuscation(version: str = "2.0", mtu: int = 1500, intensity: str = "medium",
                          *, rnd: Rnd | None = None, client_max_h: int = 0xFFFFFFFF,
-                         max_jc: int = 10) -> dict:
+                         max_jc: int = 10, rand_bytes: Callable[[int], bytes] | None = None) -> dict:
     """Generate schema-compatible AWG 2.0/3.x values using inclusive draws."""
     if version not in ("2.0", "3.0", "3.1"):
         raise ValueError(f"unsupported AWG version: {version}")
@@ -78,6 +79,29 @@ def generate_obfuscation(version: str = "2.0", mtu: int = 1500, intensity: str =
             start -= end - client_max_h
             end = client_max_h
         out[f"h{i}"] = f"{start}-{end}"
+    if version in ("3.0", "3.1"):
+        j = {"low": 10, "medium": 25, "high": 45}[intensity]
+        lo, hi = {"low": (8, 64), "medium": (16, 128), "high": (24, 200)}[intensity]
+        pad_lo = draw(lo, (lo + hi) // 2)
+        pad_hi = draw(pad_lo + 8, hi)
+        def timer(a, b, spread):
+            start = draw(a, b)
+            end = start + draw(*spread)
+            return f"{start}-{end}" if start != end else str(start)
+        rekey_timeout = timer(4, 6, (1, 4))
+        keepalive_timeout = timer(8, 14, (2, 8))
+        ra_lo = draw(100, 120)
+        ra_hi = ra_lo + draw(10, j)
+        ka_hi = int(keepalive_timeout.split("-")[-1])
+        timeout_hi = int(rekey_timeout.split("-")[-1])
+        reject_lo = max(170, ra_hi + ka_hi + timeout_hi + 15)
+        out.update(header_protection_key=base64.b64encode((rand_bytes or secrets.token_bytes)(32)).decode(),
+                   content_padding_addition=f"{pad_lo}-{pad_hi}",
+                   rekey_after_time=f"{ra_lo}-{ra_hi}", rekey_timeout=rekey_timeout,
+                   keepalive_timeout=keepalive_timeout, reject_after_time=f"{reject_lo}-{reject_lo + draw(10, j)}",
+                   max_handshake_attempts=timer(12, 18, (2, 10)))
+        if version == "3.1":
+            out["random_trailers"] = True
     return out
 
 
@@ -95,6 +119,7 @@ def validate_obfuscation(obf: dict, *, mtu: int = 1500, version: str = "2.0") ->
     padded = [s[0] + 148, s[1] + 92, s[2] + 64, s[3] + 32]
     if len(set(padded)) != 4: errors.append("padded S sizes overlap")
     if version in ("3.0", "3.1") and any(v < 12 for v in s): errors.append("3.x S values must be >= 12")
+    errors.extend(validate_3x_fields(obf))
     ranges = []
     for i in range(1, 5):
         try:
@@ -112,4 +137,24 @@ def validate_obfuscation(obf: dict, *, mtu: int = 1500, version: str = "2.0") ->
         for i, (a, b) in enumerate(ranges) for c, d in ranges[i + 1:]
     ):
         errors.append("H ranges overlap")
+    return errors
+
+
+def validate_3x_fields(obf: dict) -> list[str]:
+    errors = []
+    if "header_protection_key" in obf:
+        try:
+            if len(base64.b64decode(obf["header_protection_key"], validate=True)) != 32: raise ValueError
+        except (ValueError, TypeError):
+            errors.append("invalid header protection key")
+        if any(obf.get(f"s{i}", 0) < 12 for i in range(1, 5)): errors.append("header protection key requires S values >= 12")
+    for key in ("content_padding_addition", "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts"):
+        if key in obf:
+            try:
+                parts = obf[key].split("-")
+                if len(parts) not in (1, 2) or any(not p.isdigit() for p in parts) or (len(parts) == 2 and int(parts[0]) > int(parts[1])): raise ValueError
+            except (ValueError, AttributeError):
+                errors.append(f"invalid {key} range")
+    for key in ("random_trailers", "disable_cookies"):
+        if key in obf and not isinstance(obf[key], bool): errors.append(f"invalid {key}")
     return errors

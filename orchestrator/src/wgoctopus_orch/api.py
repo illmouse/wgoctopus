@@ -65,6 +65,7 @@ class InstanceIn(Strict):
     obfuscation: dict | None = None
     cps_profile: str | None = Field(default=None, pattern="^(none|quic_initial|tls_client_hello|dns_query|wireguard_noise|sip|random)$")
     intensity: str = Field(default="medium", pattern="^(low|medium|high)$")
+    awg_version: str = Field(default="2.0", pattern="^(2.0|3.0|3.1)$")
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
@@ -338,7 +339,9 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         peers = session.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(Peer.instance_id == i.id, or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))
         placements = session.scalars(select(Placement).where(Placement.instance_id == i.id)).all()
         return dict(id=i.id, name=i.name, listen_port=i.listen_port, address=i.address, public_key=i.public_key,
-                    obfuscation=i.obfuscation, mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
+                    obfuscation={**{k:v for k,v in i.obfuscation.items() if k != "header_protection_key"},
+                                 **({"header_protection_key_set": True} if i.obfuscation.get("header_protection_key") else {})},
+                    mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
                      placements=[dict(node_id=p.node_id, role=p.role, weight=p.weight) for p in placements],
                      active_node_id=next((p.node_id for p in placements if p.role == "active"), None), peer_count=peers,
                     created_at=i.created_at)
@@ -396,7 +399,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             instance = service.create_instance(s, body.name, body.listen_port, body.address,
                 obfuscation=body.obfuscation, mtu=body.mtu, cps_profile=body.cps_profile,
                 intensity=body.intensity, egress_interface=body.egress_interface,
-                snat_ip=body.snat_ip, crypto=cipher)
+                snat_ip=body.snat_ip, crypto=cipher, awg_version=body.awg_version)
         except ValueError:
             raise HTTPException(422, "invalid instance parameters") from None
         return inst(instance, s)

@@ -7,6 +7,7 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 | POST/GET `/v1/instances`; GET/PATCH/DELETE `/v1/instances/{id}` | Instance lifecycle; patch allows mtu, egress_interface, snat_ip only |
 
 `POST /v1/instances` accepts optional `cps_profile` (`none`, `quic_initial`, `tls_client_hello`, `dns_query`, `wireguard_noise`, `sip`, or `random`) and `intensity` (`low`, `medium`, or `high`, default `medium`). CPS is generated only when `obfuscation` is omitted; explicit obfuscation takes precedence.
+It also accepts `awg_version` (`2.0`, `3.0`, or `3.1`, default `2.0`), used only when `obfuscation` is omitted. Instance responses redact `header_protection_key` and expose only `header_protection_key_set`; the shared key is returned only in `GET /v1/peers/{id}/config`.
 | PUT/DELETE `/v1/instances/{id}/placements/{node_id}` | Placement |
 | POST `/v1/instances/{id}/switch` | Switch active placement (`{"node_id":...}`) |
 | POST/GET `/v1/nodes`; GET/PATCH/DELETE `/v1/nodes/{id}` | Node lifecycle |

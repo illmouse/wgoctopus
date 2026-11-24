@@ -46,3 +46,6 @@ A probe's identity is a normal `peers` row owned by `__probe__`; its encrypted p
 ## Failover proposals
 
 Proposals are stored as `pending`, then become `executed`, `rejected`, `expired`, `cancelled`, or `failed`. Creation records the mode and expiry; decisions record the actor/time. The down-duration tracker is in memory, so it resets on orchestrator restart.
+# AWG 3.x obfuscation
+
+AWG 3.x interfaces may include header protection, content padding, rekey/reject/keepalive timers, and maximum handshake attempts. AWG 3.1 may additionally enable random trailers. These values are carried in desired state and client configs. Rotating or changing these values (especially the header protection key and S values) is dangerous and may disconnect every client; coordinate updates and distribute the matching client config.

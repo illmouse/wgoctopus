@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .awgcps import generate_cps, validate_cps_chain
-from .awgparams import generate_obfuscation, validate_obfuscation
+from .awgparams import generate_obfuscation, validate_3x_fields, validate_obfuscation
 from .crypto import Crypto
 from .keys import generate_keypair, generate_psk, next_free_peer_ip
 from .models import (
@@ -45,20 +45,20 @@ def _event(session, kind, subject, data=None):
     session.add(Event(kind=kind, subject=subject, data=data or {}))
 
 
-def _default_obfuscation(mtu=None):
-    return generate_obfuscation(mtu=mtu or 1500)
+def _default_obfuscation(mtu=None, version="2.0"):
+    return generate_obfuscation(version=version, mtu=mtu or 1500)
 
 
 def create_instance(session: Session, name, listen_port, address, *, obfuscation=None, mtu=None,
                     cps_profile=None, intensity="medium",
-                    egress_interface=None, snat_ip=None, crypto=None):
+                    egress_interface=None, snat_ip=None, crypto=None, awg_version="2.0"):
     if not re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", name):
         raise ValueError("instance name must be a valid state interface name (1-15 characters)")
     ipaddress.ip_interface(address)
     generated = obfuscation is None
     if generated:
         effective_mtu = mtu or 1500
-        obfuscation = _default_obfuscation(effective_mtu)
+        obfuscation = _default_obfuscation(effective_mtu, awg_version)
         if cps_profile is not None and cps_profile != "none":
             obfuscation.update({key: value for key, value in generate_cps(
                 cps_profile, mtu=effective_mtu, intensity=intensity
@@ -67,7 +67,8 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
     # values (e.g. imported from an existing server) are accepted as the daemon accepts them and
     # are fully checked by the agent on push. Only the CPS syntax is checked here.
     try:
-        invalid = (generated and validate_obfuscation(obfuscation, mtu=mtu or 1500)) or validate_cps_chain(
+        checks = validate_obfuscation(obfuscation, mtu=mtu or 1500, version=awg_version) if generated else validate_3x_fields(obfuscation)
+        invalid = checks or validate_cps_chain(
             {key: value for key, value in obfuscation.items() if key in {f"i{i}" for i in range(1, 6)}}
         )
     except (AttributeError, TypeError, ValueError):
@@ -320,6 +321,14 @@ def render_client_config(session: Session, peer_id, endpoint_host, *, dns=None, 
     names = {"jc": "Jc", "jmin": "Jmin", "jmax": "Jmax", **{f"s{i}": f"S{i}" for i in range(1, 5)},
              **{f"h{i}": f"H{i}" for i in range(1, 5)}, **{f"i{i}": f"I{i}" for i in range(1, 6)}}
     lines.extend(f"{label} = {o[key]}" for key, label in names.items() if key in o and o[key] != "")
+    config_names = {"header_protection_key": "HeaderProtectionKey", "content_padding_addition": "ContentPaddingAddition",
+                    "rekey_after_time": "RekeyAfterTime", "rekey_timeout": "RekeyTimeout",
+                    "reject_after_time": "RejectAfterTime", "keepalive_timeout": "KeepaliveTimeout",
+                    "max_handshake_attempts": "MaxHandshakeAttempts"}
+    lines.extend(f"{label} = {o[key]}" for key, label in config_names.items() if key in o and o[key] != "")
+    if o.get("random_trailers") or o.get("disable_cookies"):
+        lines.extend((f"RandomTrailers = {int(bool(o.get('random_trailers')))}",
+                      f"DisableCookies = {int(bool(o.get('disable_cookies')))}"))
     lines.extend(["", "[Peer]", f"PublicKey = {instance.public_key}"])
     if peer.preshared_key_enc:
         lines.append(f"PresharedKey = {c.decrypt(peer.preshared_key_enc)}")
