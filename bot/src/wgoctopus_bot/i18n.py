@@ -4,6 +4,8 @@ import string
 
 RU = {
     "menu": "Главное меню",
+    "requests_menu": "Заявки{count}", "requests_all": "Все ({count})", "requests_pending": "Ожидают ({count})", "none_requests": "Заявок нет",
+    "request_row": "#{id} {icon} {status} {kind} @{username} → {limit} · {date} · {admin}", "request_status_pending": "ожидает", "request_approved": "одобрено", "request_declined": "отклонено", "request_access": "доступ", "request_limit": "лимит",
     "devices": "Устройства",
     "add": "Добавить устройство",
     "limit": "Запросить лимит",
@@ -54,10 +56,16 @@ RU = {
     "request_pending_admin": "Ожидает рассмотрения",
     "start": "Выберите действие:",
     "open_private_chat": "Откройте личный чат с ботом, чтобы получить конфигурацию.",
+    "users": "Пользователи", "users_total": "Пользователи: {total}", "devices_total": "Устройства: {total}",
+    "user_card": "<b>{username}</b>\nРоль: {role}\nУстройства: {used}/{limit}\nTelegram ID: {tg_id}\nСтатус: {status}", "user_devices": "Устройства",
+    "user_limit": "Лимит", "userdis": "Отключить", "userena": "Включить", "urole": "Изменить роль", "udel": "Удалить",
+    "confirm_delete": "Подтвердите удаление", "confirm": "Подтвердить", "user_admin_protected": "Нельзя отключить или изменить последнего администратора.", "user_tg_required": "Для повышения необходим Telegram ID.", "usage": "Неверные аргументы команды.",
 }
 
 EN = {
     "menu": "Main menu",
+    "requests_menu": "Requests{count}", "requests_all": "All ({count})", "requests_pending": "Pending ({count})", "none_requests": "No requests",
+    "request_row": "#{id} {icon} {status} {kind} @{username} → {limit} · {date} · {admin}", "request_status_pending": "pending", "request_approved": "approved", "request_declined": "declined", "request_access": "access", "request_limit": "limit",
     "devices": "Devices",
     "add": "Add device",
     "limit": "Request limit",
@@ -108,6 +116,10 @@ EN = {
     "request_pending_admin": "Pending review",
     "start": "Choose an action:",
     "open_private_chat": "Open a private chat with the bot to receive your configuration.",
+    "users": "Users", "users_total": "Users: {total}", "devices_total": "Devices: {total}",
+    "user_card": "<b>{username}</b>\nRole: {role}\nDevices: {used}/{limit}\nTelegram ID: {tg_id}\nStatus: {status}", "user_devices": "Devices",
+    "user_limit": "Limit", "userdis": "Disable", "userena": "Enable", "urole": "Change role", "udel": "Delete",
+    "confirm_delete": "Confirm deletion", "confirm": "Confirm", "user_admin_protected": "Cannot disable or demote the last administrator.", "user_tg_required": "A Telegram ID is required for promotion.", "usage": "Invalid command arguments.",
 }
 
 CATALOGS = {"ru": RU, "en": EN}

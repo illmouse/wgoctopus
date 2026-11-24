@@ -32,6 +32,10 @@ class FakeApi:
     async def devices(self, username: str) -> list[dict[str, Any]]:
         return [deepcopy(device) for device in self.devices_data if device["owner"] == username]
 
+    async def all_devices(self, **params: Any) -> dict[str, Any]:
+        items = deepcopy(self.devices_data)
+        return {"total": len(items), "items": items}
+
     async def device(self, ident: int) -> dict[str, Any]:
         for device in self.devices_data:
             if device["id"] == ident:
@@ -68,7 +72,29 @@ class FakeApi:
         raise ApiError(404, "not_found")
 
     async def list_users(self, **params: Any) -> list[dict[str, Any]]:
-        return deepcopy(self.admins)
+        if self.admins and params.get("role") == "admin":
+            return deepcopy(self.admins)
+        users = list(self.users.values())
+        return deepcopy([u for u in users if all(u.get(key) == value for key, value in params.items())])
+
+    async def patch_user(self, username: str, **data: Any) -> dict[str, Any]:
+        self.users[username].update(data)
+        return deepcopy(self.users[username])
+
+    async def delete_user(self, username: str) -> None:
+        del self.users[username]
+
+    async def disable_user(self, username: str, by: str) -> None:
+        self.users[username]["status"] = "disabled"
+
+    async def enable_user(self, username: str) -> None:
+        self.users[username]["status"] = "enabled"
+
+    async def ensure_user(self, username: str, role: str = "user", config_limit: int = 3) -> None:
+        self.users[username] = {"username": username, "tg_id": None, "role": role, "status": "enabled", "config_limit": config_limit}
+
+    async def delete_device(self, ident: int) -> None:
+        self.devices_data[:] = [d for d in self.devices_data if d["id"] != ident]
 
     async def create_request(self, **data: Any) -> dict[str, Any]:
         if any(r["tg_id"] == data.get("tg_id") and r["status"] == "pending" for r in self.requests.values()):
@@ -85,6 +111,10 @@ class FakeApi:
         if ident not in self.requests:
             raise ApiError(404, "not_found")
         return deepcopy(self.requests[ident])
+
+    async def list_requests(self, status: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        items = sorted((r for r in self.requests.values() if status is None or r.get("status") == status), key=lambda r: r["id"])
+        return deepcopy(items[offset:offset + limit])
 
     async def set_request_refs(self, ident: int, refs: list[list[int]]) -> None:
         self.refs[ident] = refs

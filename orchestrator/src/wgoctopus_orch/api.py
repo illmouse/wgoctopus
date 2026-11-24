@@ -903,6 +903,20 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         peers = s.scalars(select(Peer).where(Peer.owner == u.username).order_by(Peer.id)).all()
         return [device_json(p, s) for p in peers]
 
+    @app.get("/v1/devices", dependencies=[Depends(auth)])
+    def list_devices(owner: str | None = None, enabled: bool | None = None, active: bool | None = None,
+                     limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
+                     s: Session = Depends(db)):
+        query = select(Peer).where(Peer.owner != service.PROBE_OWNER).order_by(Peer.id)
+        if owner is not None:
+            query = query.where(Peer.owner == users.normalize_username(owner))
+        if enabled is not None:
+            query = query.where(Peer.enabled.is_(enabled))
+        items = [device_json(p, s) for p in s.scalars(query).all()]
+        if active is not None:
+            items = [item for item in items if item["active"] is active]
+        return {"total": len(items), "items": items[offset:offset + limit]}
+
     @app.post("/v1/users/{username}/devices", dependencies=[Depends(auth)], status_code=201)
     def create_user_device(username: str, body: DeviceIn, s: Session = Depends(db)):
         if not s.get(Instance, body.instance_id):

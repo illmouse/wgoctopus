@@ -59,11 +59,29 @@ def handshake_age(value: str | None, now: datetime | None = None) -> str:
 def main_menu(lang: str, role: str) -> Screen:
     """Build the main navigation screen."""
     rows = [[_button(t(lang, "devices"), "menu:devices")]]
+    if role == "admin":
+        rows.append([_button(t(lang, "users"), "menu:users")])
+        rows.append([_button(t(lang, "requests_menu", count=""), "menu:requests")])
     rows.append([_button(t(lang, "add"), "create:self")])
     if role != "admin":
         rows.append([_button(t(lang, "limit"), "reqlim")])
     rows.append([_button(t(lang, "close"), "close")])
     return Screen(t(lang, "menu"), rows)
+
+
+def requests_screen(lang: str, requests: list[dict[str, Any]], tab: str, page: int, total: int, pending: int) -> Screen:
+    pages = max(1, (total + 9) // 10)
+    page = max(0, min(page, pages - 1))
+    rows = [[_button(t(lang, "requests_all", count=total), f"reqs:all:{page}"), _button(t(lang, "requests_pending", count=pending), f"reqs:pending:{page}")]]
+    lines = []
+    for request in requests:
+        status = request.get("status", "pending")
+        lines.append(t(lang, "request_row", id=request["id"], icon="⏳" if status == "pending" else "✅", status=t(lang, "request_status_" + status), kind=t(lang, "request_" + request.get("type", "access")), username=request.get("username") or "—", limit=request.get("requested_limit", "—"), date=str(request.get("created_at", "—"))[:10], admin=request.get("admin_username") or "—"))
+        if status == "pending":
+            rows.append([_button(t(lang, "approve"), f"req:a:{request['id']}"), _button(t(lang, "decline_button"), f"req:d:{request['id']}")])
+    if page or page < pages - 1: rows.append([_button("‹", f"reqs:{tab}:{max(0,page-1)}"), _button("›", f"reqs:{tab}:{page+1}")])
+    rows.append([_button(t(lang, "back"), "menu")])
+    return Screen("\n".join(lines) or t(lang, "none_requests"), rows)
 
 
 def devices_screen(
@@ -88,7 +106,7 @@ def devices_screen(
     for device in selected[page * 8 : page * 8 + 8]:
         name = escape(str(device.get("name", "")), quote=False)
         age = handshake_age(device.get("latest_handshake_at"))
-        label = f"{name} · {age}"
+        label = f"{name} {age}"
         if show_owner:
             label += f" · {escape(str(device.get('owner', '')), quote=False)}"
         rows.append([_button(label, f"pinfo:{device['id']}")])
@@ -97,6 +115,8 @@ def devices_screen(
     rows.append([_button(t(lang, "close"), "close")])
     shown_limit = "∞" if limit == -1 else str(limit)
     text = t(lang, "limit_line", used=used, limit=shown_limit)
+    if show_owner:
+        text = t(lang, "devices_total", total=len(devices))
     if not selected:
         text += "\n" + t(lang, "none")
     return Screen(text, rows)
@@ -118,15 +138,47 @@ def device_card(lang: str, device: dict[str, Any], can_manage_state: bool = Fals
         rx=format_bytes(device.get("rx")),
         tx=format_bytes(device.get("tx")),
     )
-    rows = [
-        [_button(t(lang, "download"), f"cfg:{ident}")],
-        [_button(t(lang, "rename"), f"ren:{ident}")],
-    ]
+    rows = [[_button(t(lang, "download"), f"cfg:{ident}")], [_button(t(lang, "rename"), f"ren:{ident}")]]
     if can_manage_state:
         action = "toggle_off" if device.get("enabled") else "toggle_on"
         rows.append([_button(t(lang, action), f"dev_toggle:{ident}")])
         rows.append([_button(t(lang, "delete"), f"dev_del:{ident}")])
+    if can_manage_state:
+        rows.append([_button(t(lang, "back"), "menu:devices"), _button(t(lang, "close"), "close")])
+        return Screen(text, rows)
     rows.append([_button(t(lang, "back"), "menu:devices"), _button(t(lang, "close"), "close")])
+    return Screen(text, rows)
+
+
+def users_screen(lang: str, users: list[dict[str, Any]], flt: str, page: int) -> Screen:
+    filtered = [u for u in users if flt == "all" or (u.get("status") == ("enabled" if flt == "enabled" else "disabled"))]
+    filtered.sort(key=lambda u: (u.get("role") != "admin", str(u.get("username", "")).lower()))
+    pages = max(1, (len(filtered) + 7) // 8)
+    page = max(0, min(page, pages - 1))
+    rows = [[_button(t(lang, key), f"users:{key}:{0}") for key in ("all", "enabled", "disabled")]]
+    for user in filtered[page * 8:page * 8 + 8]:
+        name = str(user.get("username", ""))
+        label = ("(admin) " if user.get("role") == "admin" else "") + ("⛔ " if user.get("status") == "disabled" else "") + name
+        if len(f"user:{name}".encode()) <= 64:
+            rows.append([_button(label, f"user:{name}")])
+    if page or page < pages - 1:
+        rows.append([_button("‹", f"users:{flt}:{page-1}"), _button("›", f"users:{flt}:{page+1}")])
+    rows.append([_button(t(lang, "close"), "close")])
+    return Screen(t(lang, "users_total", total=len(filtered)), rows)
+
+
+def user_card(lang: str, user: dict[str, Any]) -> Screen:
+    name = str(user.get("username", ""))
+    limit = user.get("config_limit", 3)
+    text = t(lang, "user_card", username=escape(name), role=escape(str(user.get("role", "user"))),
+             used=user.get("device_count", 0), limit="∞" if limit == -1 else limit,
+             tg_id=user.get("tg_id") or "pending", status=t(lang, "status_off" if user.get("status") == "disabled" else "status_on"))
+    rows = []
+    if len(f"udev:{name}".encode()) <= 64:
+        rows.append([_button(t(lang, "user_devices"), f"udev:{name}")])
+        for label, data in (("user_limit", f"ulimit:{name}"), ("userdis", f"userdis:{name}"), ("userena", f"userena:{name}"), ("urole", f"urole:{name}:user" if user.get("role") == "admin" else f"urole:{name}:admin"), ("udel", f"udel:{name}")):
+            rows.append([_button(t(lang, label), data)])
+    rows.append([_button(t(lang, "back"), "menu:users"), _button(t(lang, "close"), "close")])
     return Screen(text, rows)
 
 

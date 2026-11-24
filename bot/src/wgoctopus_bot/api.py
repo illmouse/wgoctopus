@@ -77,6 +77,9 @@ class OrchApi:
     async def devices(self, username: str) -> list[dict[str, Any]]:
         return await self._request("GET", f"/v1/users/{username}/devices")
 
+    async def all_devices(self, **params: Any) -> dict[str, Any]:
+        return await self._request("GET", "/v1/devices", params=params)
+
     async def create_device(self, username: str, instance_id: int, name: str | None = None) -> Any:
         return await self._request("POST", f"/v1/users/{username}/devices", json={"instance_id": instance_id, "name": name})
 

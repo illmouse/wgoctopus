@@ -16,6 +16,9 @@ from .screens import (
     main_menu,
     request_admin_screen,
     request_done_text,
+    requests_screen,
+    user_card,
+    users_screen,
 )
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
@@ -107,10 +110,10 @@ def _api_error(exc: ApiError, actor: Actor, used: int = 0, limit: int = 0) -> To
 
 
 async def _devices(actor: Actor, api: Any, flt: str = "all", page: int = 0) -> ShowScreen:
-    devices = await api.devices(actor.username)
+    devices = (await api.all_devices(limit=1000, offset=0))["items"] if actor.role == "admin" else await api.devices(actor.username)
     user = await api.get_user(actor.username)
     limit = int(user.get("config_limit", 3))
-    screen = devices_screen(actor.lang, devices, flt, page, len(devices), limit)
+    screen = devices_screen(actor.lang, devices, flt, page, len(devices), limit, actor.role == "admin")
     return ShowScreen(screen, True)
 
 
@@ -147,6 +150,51 @@ async def handle_callback(
     try:
         if data == "menu:devices":
             return await _devices(actor, api)
+        if data == "menu:requests" or data.startswith("reqs:"):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            _, tab, raw_page = (data.split(":") + ["pending", "0"])[:3] if data.startswith("reqs:") else ("", "pending", "0")
+            page = int(raw_page)
+            all_items = await api.list_requests(limit=100000, offset=0)
+            pending = sum(item.get("status") == "pending" for item in all_items)
+            items = await api.list_requests(status="pending" if tab == "pending" else None, limit=10, offset=page * 10)
+            return ShowScreen(requests_screen(actor.lang, items, tab, page, len(all_items), pending), True)
+        if data == "menu:users" or data.startswith("users:"):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            flt, raw_page = data.split(":")[1:] if data.startswith("users:") else ("all", "0")
+            return ShowScreen(users_screen(actor.lang, await api.list_users(), flt, int(raw_page)), True)
+        if data.startswith("udev:"):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            return await _devices(Actor(data.split(":",1)[1], actor.tg_id, "user", actor.lang), api)
+        if data.startswith("user:"):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            return ShowScreen(user_card(actor.lang, await api.get_user(data[5:])), True)
+        if data.startswith("ulimit:"):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            return AskInput("user_limit", {"username": data[7:]}, t(actor.lang, "ask_limit"))
+        if data.startswith(("dev_toggle:", "dev_del:", "dev_delok:")):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            action, raw_id = data.split(":", 1); ident = int(raw_id)
+            if action == "dev_del": return ShowScreen(device_card(actor.lang, await api.device(ident), True), True)
+            device = await api.device(ident)
+            if action == "dev_delok": await api.delete_device(ident)
+            else: await api.patch_device(ident, enabled=not device.get("enabled"))
+            return await _devices(actor, api)
+        if data.startswith(("userdis:", "userena:", "urole:", "udel:", "udelok:")):
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            parts = data.split(":"); action, username = parts[0], parts[1]
+            user = await api.get_user(username)
+            if action == "udel": return ShowScreen(user_card(actor.lang, user), True)
+            if action == "udelok": await api.delete_user(username)
+            elif action == "userdis":
+                if user.get("role") == "admin": return Toast(t(actor.lang, "user_admin_protected"))
+                await api.disable_user(username, by=actor.username)
+            elif action == "userena": await api.enable_user(username)
+            else:
+                role = parts[2]
+                if role == "admin" and not user.get("tg_id"): return Toast(t(actor.lang, "user_tg_required"))
+                if role == "user" and user.get("role") == "admin" and sum(u.get("role") == "admin" for u in await api.list_users()) <= 1: return Toast(t(actor.lang, "user_admin_protected"))
+                await api.patch_user(username, role=role)
+            return ShowScreen(users_screen(actor.lang, await api.list_users(), "all", 0), True)
         if data.startswith("dev:"):
             _, flt, raw_page = data.split(":", 2)
             return await _devices(actor, api, flt, int(raw_page))
@@ -173,7 +221,7 @@ async def handle_callback(
                 )
             if kind == "ren":
                 return AskInput("rename", {"id": ident}, t(actor.lang, "ask_rename"))
-            return ShowScreen(device_card(actor.lang, device), True)
+            return ShowScreen(device_card(actor.lang, device, actor.role == "admin"), True)
         if data == "close":
             return Toast("")
         if data == "reqlim":
@@ -226,12 +274,18 @@ async def _decide_request(data: str, actor: Actor, api: Any, config: Any) -> Res
     done["status"] = status
     done["admin_username"] = actor.username
     refs = request.get("notification_refs", [])
-    return ResultBundle(
-        [
+    results: list[Result] = [
             EditAdminCopies(refs, request_done_text(actor.lang, done)),
             Notify(int(request.get("tg_id", 0)), requester_text),
         ]
-    )
+    return ResultBundle(results)
+
+
+async def _request_view(actor: Actor, api: Any, tab: str, page: int) -> ShowScreen:
+    all_items = await api.list_requests(limit=100000, offset=0)
+    pending = sum(item.get("status") == "pending" for item in all_items)
+    items = await api.list_requests(status="pending" if tab == "pending" else None, limit=10, offset=page * 10)
+    return ShowScreen(requests_screen(actor.lang, items, tab, page, len(all_items), pending), True)
 
 
 async def handle_input(
@@ -266,6 +320,13 @@ async def handle_input(
             _authorize(actor, device)
             renamed = await api.patch_device(ident, name=text)
             return ShowScreen(device_card(actor.lang, renamed or {**device, "name": text}), False)
+        if kind == "user_limit":
+            if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+            try: value = int(text)
+            except ValueError: return Toast(t(actor.lang, "limit_invalid"))
+            if value < -1: return Toast(t(actor.lang, "limit_invalid"))
+            username = payload["username"]; await api.patch_user(username, config_limit=value)
+            return ShowScreen(user_card(actor.lang, await api.get_user(username)), False)
         if kind == "limit_req":
             if actor.role == "admin":
                 return Toast(t(actor.lang, "admin_use_limit_cmd"))
@@ -312,6 +373,28 @@ async def cmd_create(actor: Actor, api: Any, config: Config | Any) -> Result:
         suffix += 1
         name = f"device_{suffix}"
     return await handle_input("create_name", {}, actor, api, name, config)
+
+
+async def cmd_admin(command: str, args: list[str], actor: Actor, api: Any, config: Any) -> Result:
+    if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
+    try:
+        if command == "users" and not args: return ShowScreen(users_screen(actor.lang, await api.list_users(), "all", 0))
+        if command == "requests" and not args: return await _request_view(actor, api, "pending", 0)
+        if command == "limit" and len(args) == 2:
+            value = int(args[1])
+            if value < -1: raise ValueError
+            await api.patch_user(args[0], config_limit=value)
+            return ShowScreen(user_card(actor.lang, await api.get_user(args[0])))
+        if command == "deluser" and len(args) == 1: return ShowScreen(user_card(actor.lang, await api.get_user(args[0])))
+        if command in {"disable", "enable"} and len(args) == 1:
+            if command == "disable": await api.disable_user(args[0], by=actor.username)
+            else: await api.enable_user(args[0])
+            return Toast("")
+        if command == "adduser" and len(args) in {1, 2}:
+            await api.ensure_user(args[0], role="user", config_limit=int(args[1]) if len(args) == 2 else config.default_config_limit)
+            return Toast("")
+    except (ValueError, ApiError): pass
+    return Toast(t(actor.lang, "usage"))
 
 
 async def cmd_givemepowers(

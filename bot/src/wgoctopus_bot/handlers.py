@@ -34,6 +34,7 @@ from .router import (
     SendDocument,
     ShowScreen,
     Toast,
+    cmd_admin,
     cmd_create,
     cmd_givemepowers,
     handle_callback,
@@ -142,7 +143,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     if actor and message and message.chat.type == "private":
         language = actor.lang
-        keyboard = ReplyKeyboardMarkup([[KeyboardButton(t(language, "devices")), KeyboardButton(t(language, "add"))], [KeyboardButton(t(language, "limit"))]], resize_keyboard=True)
+        buttons = [KeyboardButton(t(language, "devices")), KeyboardButton(t(language, "add"))]
+        if actor.role == "admin": buttons.extend([KeyboardButton(t(language, "users")), KeyboardButton(t(language, "requests_menu", count=""))])
+        keyboard = ReplyKeyboardMarkup([buttons, [KeyboardButton(t(language, "limit"))]], resize_keyboard=True)
         await message.reply_text(t(language, "start"), reply_markup=keyboard)
 
 
@@ -162,6 +165,14 @@ async def create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             result = await cmd_create(actor, api, config)
         await render(result, update, context)
+
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    api, config = _services(context)
+    actor = await resolve_actor(update, api)
+    if actor and update.effective_message:
+        command = update.effective_message.text.split()[0].split("@", 1)[0].lstrip("/")
+        await render(await cmd_admin(command, context.args, actor, api, config), update, context)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -203,6 +214,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if actor is None:
         return
     labels = {t(actor.lang, "devices"): "menu:devices", t(actor.lang, "add"): "create:self", t(actor.lang, "limit"): "reqlim"}
+    labels.update({"Requests": "menu:requests", "Заявки": "menu:requests"})
     if message.text in labels:
         context.user_data.pop("input", None)
         await render(await handle_callback(labels[message.text], actor, api, config), update, context)
@@ -247,6 +259,8 @@ def build_application(config: Config, api: OrchApi | None = None) -> Application
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("create", create))
+    for command in ("users", "requests", "limit", "deluser", "disable", "enable", "adduser"):
+        application.add_handler(CommandHandler(command, admin_command))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("givemepowers", powers))
     application.add_handler(CallbackQueryHandler(callback))
