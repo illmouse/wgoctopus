@@ -164,7 +164,7 @@ class FailoverEngine:
             return False
         return self._healthy_candidate(session, instance_id, from_node_id) is not None
 
-    def confirm(self, proposal_id, *, by):
+    def confirm(self, proposal_id, *, by, actor=None):
         with self.session_factory() as session:
             proposal = session.get(FailoverProposal, proposal_id)
             if proposal is None:
@@ -193,9 +193,11 @@ class FailoverEngine:
                     switch_active(session, proposal.instance_id, proposal.to_node_id,
                                   crypto=getattr(self.reconciler, "crypto", None))
                     proposal.state, proposal.decided_at, proposal.decided_by = "executed", _dt(now), by
-                    session.add(Event(kind="failover.executed", subject=str(proposal.id), data={"proposal_id": proposal.id,
+                    data = {"proposal_id": proposal.id,
                         "instance_id": proposal.instance_id, "from": proposal.from_node_id,
-                        "to": proposal.to_node_id, "by": by}))
+                        "to": proposal.to_node_id, "by": by}
+                    if actor is not None: data["actor"] = actor
+                    session.add(Event(kind="failover.executed", subject=str(proposal.id), data=data))
                 session.commit()
             except Exception:
                 session.rollback()
@@ -209,7 +211,7 @@ class FailoverEngine:
             self.on_executed(proposal.instance_id, proposal.to_node_id)
         return proposal
 
-    def reject(self, proposal_id, *, by):
+    def reject(self, proposal_id, *, by, actor=None):
         with self.session_factory() as session:
             proposal = session.get(FailoverProposal, proposal_id)
             if proposal is None:
@@ -217,7 +219,9 @@ class FailoverEngine:
             if proposal.state != "pending":
                 raise FailoverError("not_pending")
             proposal.state, proposal.decided_at, proposal.decided_by = "rejected", _dt(self.clock()), by
-            session.add(Event(kind="failover.rejected", subject=str(proposal.id), data={"proposal_id": proposal.id, "by": by}))
+            data = {"proposal_id": proposal.id, "by": by}
+            if actor is not None: data["actor"] = actor
+            session.add(Event(kind="failover.rejected", subject=str(proposal.id), data=data))
             session.commit()
             return proposal
 

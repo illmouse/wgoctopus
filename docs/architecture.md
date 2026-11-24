@@ -79,13 +79,17 @@ The alert dispatcher reads persisted events and delivers plain-text Telegram not
 | Variable | Default | Purpose |
 |---|---|---|
 | `WGOCTOPUS_TELEGRAM_TOKEN` / `_FILE` | unset | Telegram bot token; file wins |
-| `WGOCTOPUS_TELEGRAM_CHAT_ID` | unset | Destination chat |
+| `WGOCTOPUS_TELEGRAM_CHAT_ID` | unset | Destination chat(s), comma-separated |
 | `WGOCTOPUS_TELEGRAM_API_BASE` | `https://api.telegram.org` | Telegram API base |
 | `WGOCTOPUS_ALERTS_ENABLED` | `auto` | `auto`, `true`, or `false` |
 | `WGOCTOPUS_ALERT_DELAY_SECONDS` | `60` | Flap suppression delay |
 | `WGOCTOPUS_ALERT_MAX_PER_MINUTE` | `20` | Delivery limit |
 | `WGOCTOPUS_ALERT_POLL_SECONDS` | `5` | Event polling interval |
 | `WGOCTOPUS_ALERT_KINDS` | empty | Optional comma-separated event kinds |
+| `WGOCTOPUS_TELEGRAM_BUTTONS` | `auto` | Enables orchestrator callback polling; keep `false` when deploying the separate `bot/` module. |
+| `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS` | `auto` | Attach Confirm/Reject buttons to proposed failover alerts; auto follows alert enablement. |
+
+With the separate `bot/` module deployed, use one bot token and set `WGOCTOPUS_TELEGRAM_BUTTONS=false` so only that module runs `getUpdates`; set `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS=true` to include decision buttons in orchestrator alerts.
 # Telegram failover confirmation
 
 The orchestrator can attach Confirm/Reject inline buttons to failover proposals. A long-polling `getUpdates` client accepts callbacks only from configured Telegram user IDs and only in the configured chat. Updates are persisted in `alert_state` to avoid replay after restart. This is outbound-only; configure no Telegram webhook, and run only one orchestrator instance per bot token because Telegram does not support concurrent pollers reliably. Callback decisions use the same failover engine as the API.

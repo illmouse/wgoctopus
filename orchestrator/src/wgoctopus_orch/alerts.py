@@ -26,6 +26,7 @@ class NotifyError(Exception):
 class TelegramNotifier:
     def __init__(self, token: str, chat_id: str, *, api_base: str = "https://api.telegram.org", timeout: float = 10, client=None):
         self._token, self.chat_id = token, chat_id
+        self.chat_ids = [value.strip() for value in chat_id.split(",")]
         self.api_base, self.timeout, self.client = api_base.rstrip("/"), timeout, client
 
     def __repr__(self):
@@ -35,33 +36,35 @@ class TelegramNotifier:
 
     async def send(self, text: str, *, buttons: list[list[tuple[str, str]]] | None = None) -> None:
         url = f"{self.api_base}/bot{self._token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": text[:4000], "disable_web_page_preview": True}
+        payload = {"text": text[:4000], "disable_web_page_preview": True}
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in row] for row in buttons]}
-        try:
-            if self.client is None:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.post(url, json=payload)
-            else:
-                response = await self.client.post(url, json=payload)
-        except httpx.TimeoutException:
-            raise NotifyError("Telegram request timed out") from None
-        except httpx.HTTPError:
-            raise NotifyError("Telegram network error") from None
-        retry_after = None
-        if response.status_code == 429:
+        failures = []
+        for chat_id in self.chat_ids:
             try:
-                retry_after = float(response.json().get("parameters", {}).get("retry_after"))
-            except (ValueError, TypeError, AttributeError):
-                pass
-            raise NotifyError("Telegram rate limit exceeded", retry_after=retry_after)
-        if response.status_code >= 400:
-            raise NotifyError("Telegram request failed")
-        try:
-            if response.json().get("ok") is not True:
-                raise NotifyError("Telegram rejected the message")
-        except (ValueError, AttributeError):
-            raise NotifyError("Telegram returned an invalid response") from None
+                request_payload = {**payload, "chat_id": chat_id}
+                if self.client is None:
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        response = await client.post(url, json=request_payload)
+                else:
+                    response = await self.client.post(url, json=request_payload)
+                if response.status_code == 429:
+                    retry_after = response.json().get("parameters", {}).get("retry_after")
+                    raise NotifyError("Telegram rate limit exceeded", retry_after=float(retry_after) if retry_after is not None else None)
+                if response.status_code >= 400:
+                    raise NotifyError("Telegram request failed")
+                if response.json().get("ok") is not True:
+                    raise NotifyError("Telegram rejected the message")
+            except httpx.TimeoutException:
+                failures.append(NotifyError("Telegram request timed out"))
+            except httpx.HTTPError:
+                failures.append(NotifyError("Telegram network error"))
+            except (ValueError, AttributeError):
+                failures.append(NotifyError("Telegram returned an invalid response"))
+            except NotifyError as exc:
+                failures.append(exc)
+        if len(failures) == len(self.chat_ids):
+            raise failures[0]
 
 
 class Notifier(Protocol):

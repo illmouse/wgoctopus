@@ -50,6 +50,7 @@ class Settings:
     failover_cooldown_seconds: float = 600
     failover_eval_interval: float = 15
     telegram_buttons: bool = False
+    telegram_failover_buttons: bool = False
     telegram_allowed_user_ids: tuple[int, ...] = ()
     telegram_poll_timeout: int = 25
     pull_listen: str = ""
@@ -73,6 +74,11 @@ class Settings:
             except OSError as exc:
                 raise ValueError("cannot read WGOCTOPUS_TELEGRAM_TOKEN_FILE") from exc
         chat_id = os.getenv("WGOCTOPUS_TELEGRAM_CHAT_ID")
+        if chat_id is not None:
+            chat_ids = [value.strip() for value in chat_id.split(",")]
+            if not all(chat_ids):
+                raise ValueError("WGOCTOPUS_TELEGRAM_CHAT_ID must contain non-empty chat IDs")
+            chat_id = ",".join(chat_ids)
         alerts = os.getenv("WGOCTOPUS_ALERTS_ENABLED", "auto").lower()
         if alerts not in {"auto", "true", "false"}:
             raise ValueError("WGOCTOPUS_ALERTS_ENABLED must be auto, true, or false")
@@ -96,6 +102,9 @@ class Settings:
         if buttons not in {"auto", "true", "false"}:
             raise ValueError("WGOCTOPUS_TELEGRAM_BUTTONS must be auto, true, or false")
         alerts_enabled = alerts == "true" or (alerts == "auto" and bool(token and chat_id))
+        failover_buttons = os.getenv("WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS", "auto").lower()
+        if failover_buttons not in {"auto", "true", "false"}:
+            raise ValueError("WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS must be auto, true, or false")
         if buttons == "true" and not allowed_ids:
             raise ValueError("WGOCTOPUS_TELEGRAM_BUTTONS=true requires allowed user IDs")
         poll_timeout = int(os.getenv("WGOCTOPUS_TELEGRAM_POLL_TIMEOUT", "25"))
@@ -125,8 +134,9 @@ class Settings:
                    float(os.getenv("WGOCTOPUS_FAILOVER_PROPOSAL_TTL", "900")),
                    float(os.getenv("WGOCTOPUS_FAILOVER_COOLDOWN", "600")),
                     float(os.getenv("WGOCTOPUS_FAILOVER_EVAL_INTERVAL", "15")),
-                    buttons == "true" or (buttons == "auto" and alerts_enabled and bool(allowed_ids)),
-                    allowed_ids, poll_timeout)
+                     buttons == "true" or (buttons == "auto" and alerts_enabled and bool(allowed_ids)),
+                     failover_buttons == "true" or (failover_buttons == "auto" and alerts_enabled),
+                     allowed_ids, poll_timeout)
         pull_listen = os.getenv("WGOCTOPUS_PULL_LISTEN", "")
         if pull_listen and not re.fullmatch(r"(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):[0-9]{1,5}", pull_listen):
             raise ValueError("WGOCTOPUS_PULL_LISTEN must be host:port")

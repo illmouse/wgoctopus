@@ -26,7 +26,10 @@ class OrchApi:
             try:
                 body = response.json()
                 err = body.get("detail", body)
-                code, detail = err.get("error", "request_failed"), err.get("detail", "")
+                if isinstance(err, str):
+                    code, detail = body.get("error", "request_failed"), err
+                else:
+                    code, detail = err.get("error", "request_failed"), err.get("detail", "")
             except (ValueError, AttributeError):
                 code, detail = "request_failed", ""
             raise ApiError(response.status_code, str(code), str(detail))
@@ -70,6 +73,12 @@ class OrchApi:
 
     async def decline_request(self, request_id: int, **data: Any) -> Any:
         return await self._request("POST", f"/v1/requests/{request_id}/decline", json=data)
+
+    async def confirm_failover(self, proposal_id: int, *, actor: str) -> Any:
+        return await self._request("POST", f"/v1/failovers/{proposal_id}/confirm", json={"by": "telegram", "actor": actor})
+
+    async def reject_failover(self, proposal_id: int, *, actor: str) -> Any:
+        return await self._request("POST", f"/v1/failovers/{proposal_id}/reject", json={"by": "telegram", "actor": actor})
 
     async def set_request_refs(self, request_id: int, refs: list[list[int]]) -> Any:
         return await self._request("PUT", f"/v1/requests/{request_id}/refs", json={"refs": refs})

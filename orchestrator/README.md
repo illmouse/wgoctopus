@@ -68,5 +68,8 @@ Offline AmneziaWG and wg-easy imports are available with `python -m wgoctopus_or
 | Variable | Default | Description |
 |---|---:|---|
 | `WGOCTOPUS_TELEGRAM_BUTTONS` | `auto` | `auto`, `true`, or `false`; auto requires alerts and a non-empty user allowlist. |
+| `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS` | `auto` | `auto`, `true`, or `false`; attach Confirm/Reject to proposed failover alerts; auto follows alerts. |
 | `WGOCTOPUS_TELEGRAM_ALLOWED_USER_IDS` | empty | Comma-separated Telegram numeric user IDs. Empty disables callbacks; required when buttons are true. |
 | `WGOCTOPUS_TELEGRAM_POLL_TIMEOUT` | `25` | Long-poll timeout in seconds. |
+
+When deploying the separate `bot/` module, keep orchestrator polling off (`WGOCTOPUS_TELEGRAM_BUTTONS=false`) and set `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS=true`; only the bot module should poll `getUpdates`.

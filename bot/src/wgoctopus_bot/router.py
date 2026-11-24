@@ -109,6 +109,29 @@ def _api_error(exc: ApiError, actor: Actor, used: int = 0, limit: int = 0) -> To
     return Toast(message)
 
 
+_FAILOVER_ERRORS = {"not_found": "fo_not_found", "not_pending": "fo_not_pending", "expired": "fo_expired",
+                    "stale": "fo_stale", "no_candidate": "fo_no_candidate"}
+
+
+async def _failover(data: str, actor: Actor, api: Any) -> Result:
+    if actor.role != "admin":
+        return Toast(t(actor.lang, "forbidden"), alert=True)
+    parts = data.split(":")
+    if len(parts) != 3 or parts[1] not in ("c", "r") or not parts[2].isdigit():
+        return Toast(t(actor.lang, "not_found"))
+    ident = int(parts[2])
+    try:
+        if parts[1] == "c":
+            await api.confirm_failover(ident, actor=actor.username)
+        else:
+            await api.reject_failover(ident, actor=actor.username)
+    except ApiError as exc:
+        key = _FAILOVER_ERRORS.get(exc.detail) or _FAILOVER_ERRORS.get(exc.code) or ("fo_not_found" if exc.status == 404 else "api_error")
+        return Toast(t(actor.lang, key), alert=True)
+    key = "fo_confirmed" if parts[1] == "c" else "fo_rejected"
+    return ShowScreen(Screen(t(actor.lang, key, id=ident, actor=actor.username), []), True)
+
+
 async def _devices(actor: Actor, api: Any, flt: str = "all", page: int = 0) -> ShowScreen:
     devices = (await api.all_devices(limit=1000, offset=0))["items"] if actor.role == "admin" else await api.devices(actor.username)
     user = await api.get_user(actor.username)
@@ -150,6 +173,8 @@ async def handle_callback(
     try:
         if data == "menu:devices":
             return await _devices(actor, api)
+        if data.startswith("fo:"):
+            return await _failover(data, actor, api)
         if data == "menu:requests" or data.startswith("reqs:"):
             if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
             _, tab, raw_page = (data.split(":") + ["pending", "0"])[:3] if data.startswith("reqs:") else ("", "pending", "0")

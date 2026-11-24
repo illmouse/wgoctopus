@@ -11,7 +11,7 @@ from pathlib import Path
 
 import asyncssh
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -295,7 +295,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                     alert_settings.telegram_token, alert_settings.telegram_chat_id,
                     api_base=alert_settings.telegram_api_base), delay_seconds=alert_settings.alert_delay_seconds,
                     max_per_minute=alert_settings.alert_max_per_minute, poll_seconds=alert_settings.alert_poll_seconds,
-                    kinds=alert_settings.alert_kinds, buttons_enabled=alert_settings.telegram_buttons_enabled)
+                    kinds=alert_settings.alert_kinds, buttons_enabled=(alert_settings.telegram_buttons_enabled or alert_settings.telegram_failover_buttons) and alert_settings.alerts_enabled)
             else:
                 app.state.alerts = None
             stop = asyncio.Event()
@@ -388,7 +388,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     @app.get("/v1/alerts", dependencies=[Depends(auth)])
     def alerts_status():
         dispatcher = app.state.alerts
-        return {"enabled": dispatcher is not None, "buttons_enabled": alert_settings.telegram_buttons_enabled, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
+        return {"enabled": dispatcher is not None, "buttons_enabled": alert_settings.telegram_buttons_enabled, "failover_buttons": alert_settings.telegram_failover_buttons and alert_settings.alerts_enabled, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
 
     @app.get("/v1/pull", dependencies=[Depends(auth)])
     def pull_status():
@@ -439,18 +439,21 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if not p: raise HTTPException(404, "not_found")
         return proposal_json(p)
 
-    def decide(ident, action):
+    def decide(ident, action, decision):
         if not app.state.failover: raise HTTPException(409, "disabled")
-        try: return proposal_json(getattr(app.state.failover, action)(ident, by="api"))
+        by, actor = decision.get("by", "api"), decision.get("actor")
+        if by not in {"api", "telegram"} or (actor is not None and (not isinstance(actor, str) or len(actor) > 64)):
+            raise HTTPException(422, "invalid decision")
+        try: return proposal_json(getattr(app.state.failover, action)(ident, by=by, actor=actor))
         except FailoverError as exc:
             code = "not_found" if exc.code == "not_found" else exc.code
             raise HTTPException(404 if code == "not_found" else 409, code) from None
 
     @app.post("/v1/failovers/{ident}/confirm", dependencies=[Depends(auth)])
-    def confirm_failover(ident: int): return decide(ident, "confirm")
+    def confirm_failover(ident: int, decision: dict | None = Body(None)): return decide(ident, "confirm", decision or {})
 
     @app.post("/v1/failovers/{ident}/reject", dependencies=[Depends(auth)])
-    def reject_failover(ident: int): return decide(ident, "reject")
+    def reject_failover(ident: int, decision: dict | None = Body(None)): return decide(ident, "reject", decision or {})
 
     def placed_nodes(session, instance_id):
         return session.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()

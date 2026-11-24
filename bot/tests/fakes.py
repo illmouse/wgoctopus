@@ -20,6 +20,20 @@ class FakeApi:
         self.refs: dict[int, list[list[int]]] = {}
         self.config = b"[Interface]\nPrivateKey = secret\n"
 
+    async def confirm_failover(self, proposal_id: int, *, actor: str) -> Any:
+        return self._failover("confirm", proposal_id, actor)
+
+    async def reject_failover(self, proposal_id: int, *, actor: str) -> Any:
+        return self._failover("reject", proposal_id, actor)
+
+    def _failover(self, action: str, proposal_id: int, actor: str) -> Any:
+        self.failover_calls = getattr(self, "failover_calls", [])
+        self.failover_calls.append((action, proposal_id, actor))
+        error = getattr(self, "failover_error", None)
+        if error:
+            raise error
+        return {"id": proposal_id}
+
     async def resolve(self, tg_id: int, username: str | None, language: str) -> dict[str, Any]:
         user = self.users.get((username or "").lower())
         if user is None:

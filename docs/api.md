@@ -23,15 +23,17 @@ Node management modes are `push`, `pull`, and `auto`. Node responses include the
 | GET `/metrics` | Prometheus text exposition (0.0.4) |
 Pull metrics: `wgoctopus_pull_server_enabled`, `wgoctopus_pull_tunnel_up{node=...}`, and `wgoctopus_pull_connections_total{result=...}`. No keys or addresses are exposed.
 Pull lifecycle events `node.pull_connected` and `node.pull_disconnected` are recorded in `/v1/events`.
-| GET `/v1/alerts` | Alert enablement and delivery counters |
+| GET `/v1/alerts` | Alert enablement, button settings (`buttons_enabled`, `failover_buttons`), and delivery counters |
 | POST `/v1/alerts/test` | Send a test notification (202); 409 when disabled, 502 on delivery failure |
 | GET `/v1/failover` | Failover mode and evaluation settings |
 | GET `/v1/failovers`; GET `/v1/failovers/{id}` | List proposals (state, instance_id, limit, offset) or retrieve one |
-| POST `/v1/failovers/{id}/confirm`; POST `/v1/failovers/{id}/reject` | Confirm or reject a pending proposal; request body omitted |
+| POST `/v1/failovers/{id}/confirm`; POST `/v1/failovers/{id}/reject` | Confirm or reject a pending proposal; optional `{"by":"api"|"telegram","actor":"name"}` body (defaults to API) |
 
 Failover errors use the standard error envelope: unknown ids are 404 `not_found`; proposals that cannot be decided (including expired, stale, or no candidate) are 409. Example: `curl -X POST -H 'Authorization: Bearer <token>' http://localhost:8080/v1/failovers/1/confirm`.
 
 Alert endpoints require bearer authentication. Responses never include Telegram credentials or chat identifiers.
+
+When the separate `bot/` module is deployed, set `WGOCTOPUS_TELEGRAM_BUTTONS=false` to prevent competing `getUpdates` polling and `WGOCTOPUS_TELEGRAM_FAILOVER_BUTTONS=true` to attach confirmation buttons to failover alerts. The bot reports decisions through the API using `by: "telegram"`.
 
 ### Monitoring
 
