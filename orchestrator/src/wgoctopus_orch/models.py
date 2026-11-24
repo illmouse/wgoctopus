@@ -2,7 +2,16 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -149,3 +158,43 @@ class FailoverProposal(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decided_by: Mapped[str | None] = mapped_column(String)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class BotUser(Base):
+    __tablename__ = "bot_users"
+    __table_args__ = (CheckConstraint("role IN ('admin','user')"), CheckConstraint("status IN ('enabled','disabled')"), CheckConstraint("config_limit >= -1"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    tg_id: Mapped[int | None] = mapped_column(Integer, unique=True)
+    role: Mapped[str] = mapped_column(String, default="user", nullable=False)
+    config_limit: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="enabled", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_by: Mapped[str | None] = mapped_column(String)
+    language: Mapped[str | None] = mapped_column(String(8))
+
+
+class UserRequest(Base):
+    __tablename__ = "user_requests"
+    __table_args__ = (CheckConstraint("type IN ('access','limit')"), CheckConstraint("status IN ('pending','approved','declined')"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
+    tg_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(64))
+    first_name: Mapped[str | None] = mapped_column(String)
+    last_name: Mapped[str | None] = mapped_column(String)
+    requested_limit: Mapped[int | None] = mapped_column(Integer)
+    previous_limit: Mapped[int | None] = mapped_column(Integer)
+    admin_id: Mapped[int | None] = mapped_column(Integer)
+    admin_username: Mapped[str | None] = mapped_column(String(64))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notification_refs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+
+class AdminUsernameHistory(Base):
+    __tablename__ = "admin_username_history"
+    username: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)

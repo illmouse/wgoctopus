@@ -13,6 +13,7 @@ class RecordingReconciler:
         self.kicks = []
         self.dangerous = []
         self.statuses = {}
+        self.scrapes_data = {}
         self._kick = asyncio.Event()
 
     def kick(self, node_id, **kwargs):
@@ -20,6 +21,9 @@ class RecordingReconciler:
 
     def status(self):
         return self.statuses
+
+    def scrapes(self):
+        return self.scrapes_data
 
     async def apply_dangerous(self, node_id):
         self.dangerous.append(node_id)

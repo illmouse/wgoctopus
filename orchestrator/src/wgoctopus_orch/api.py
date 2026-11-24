@@ -5,6 +5,7 @@ import hmac
 import ipaddress
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,10 +21,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import service
+from . import service_users as users
 from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
+from .device_stats import device_stats
 from .failover import FailoverError, build_failover
 from .metrics import render_metrics
 from .models import (
@@ -37,6 +40,7 @@ from .models import (
     Peer,
     Placement,
     Probe,
+    UserRequest,
 )
 from .pull_server import PullServer
 from .reconciler import build_reconciler
@@ -58,6 +62,40 @@ def _token():
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+class ResolveUserIn(Strict):
+    tg_id: int
+    username: str | None
+    language: str | None
+
+class UserEnsureIn(Strict):
+    role: str = Field(default="user", pattern="^(admin|user)$")
+    config_limit: int = Field(default=3, ge=-1)
+
+class UserPatchIn(Strict):
+    role: str | None = Field(default=None, pattern="^(admin|user)$")
+    config_limit: int | None = Field(default=None, ge=-1)
+
+class DisableIn(Strict):
+    by: str
+
+class RequestIn(Strict):
+    type: str = Field(pattern="^(access|limit)$")
+    tg_id: int
+    username: str | None
+    first_name: str | None
+    last_name: str | None
+    requested_limit: int | None = Field(default=None, ge=-1)
+
+class DecisionIn(Strict):
+    admin_tg_id: int
+    admin_username: str | None
+
+class ApproveIn(DecisionIn):
+    default_limit: int = Field(default=3, ge=-1)
+
+class RefsIn(Strict):
+    refs: list[tuple[int, int]]
 
 
 class InstanceIn(Strict):
@@ -188,6 +226,17 @@ def _normalize_pull_key(value):
         return " ".join(normalized[:2])
     except (ValueError, asyncssh.Error, TypeError):
         raise ValueError("invalid OpenSSH public key") from None
+
+
+class DeviceIn(Strict):
+    instance_id: int
+    name: str | None = None
+    admin_bypass: StrictBool = False
+
+
+class DevicePatchIn(Strict):
+    name: str | None = None
+    enabled: StrictBool | None = None
 
 
 class SwitchIn(Strict):
@@ -773,5 +822,148 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         for st in statuses: states[st.state.value]+=1
         return {"nodes_by_state":states,"nodes_unhealthy":s.scalar(select(__import__("sqlalchemy").func.count(NodeObserved.node_id)).where(NodeObserved.healthy.is_(False))),
                 "instances":s.scalar(select(__import__("sqlalchemy").func.count(Instance.id))),"peers":s.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))}
+
+    def user_json(u, s):
+        return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,
+                    status=u.status, created_at=u.created_at, disabled_at=u.disabled_at,
+                    disabled_by=u.disabled_by, language=u.language,
+                    device_count=users.count_user_devices(s, u.username))
+
+    def user_call(fn, *args, **kwargs):
+        try: return fn(*args, **kwargs)
+        except users.UserError as exc:
+            status = {"not_found":404,"conflict":409,"forbidden":403,"not_allowed":409,"invalid":422}[exc.code]
+            raise HTTPException(status, detail={"error":exc.code,"detail":str(exc)}) from None
+
+    @app.post("/v1/users/resolve", dependencies=[Depends(auth)])
+    def resolve_user(body: ResolveUserIn, s: Session = Depends(db)):
+        u = user_call(users.resolve_user, s, body.tg_id, body.username, language=body.language)
+        if not u: raise HTTPException(404, detail={"error":"not_found","detail":"user not found"})
+        return user_json(u, s)
+
+    @app.put("/v1/users/{username}", dependencies=[Depends(auth)])
+    def put_user(username: str, body: UserEnsureIn, s: Session = Depends(db)):
+        existed = user_call(users.get_user, s, username)
+        u = user_call(users.ensure_admin, s, username) if body.role == "admin" else user_call(users.ensure_user, s, username, config_limit=body.config_limit)
+        return JSONResponse(status_code=200 if existed else 201, content=jsonable_encoder(user_json(u, s)))
+
+    @app.get("/v1/users", dependencies=[Depends(auth)])
+    def list_users(status: str | None = None, role: str | None = None, s: Session = Depends(db)):
+        return [user_json(u, s) for u in users.list_users(s, status, role)]
+
+    @app.get("/v1/users/{username}", dependencies=[Depends(auth)])
+    def get_user(username: str, s: Session = Depends(db)):
+        u = user_call(users.get_user, s, username)
+        if not u: raise HTTPException(404, detail={"error": "not_found", "detail": "user not found"})
+        return user_json(u, s)
+
+    @app.patch("/v1/users/{username}", dependencies=[Depends(auth)])
+    def patch_user(username: str, body: UserPatchIn, s: Session = Depends(db)):
+        u = user_call(users.get_user, s, username)
+        if body.config_limit is not None: u = user_call(users.set_limit, s, username, body.config_limit)
+        if body.role is not None: u = user_call(users.set_role, s, username, body.role)
+        return user_json(u, s)
+
+    @app.post("/v1/users/{username}/disable", dependencies=[Depends(auth)])
+    def disable_user(username: str, body: DisableIn, s: Session = Depends(db)):
+        ids = s.scalars(select(Peer.instance_id).where(Peer.owner == users.normalize_username(username))).all()
+        u = user_call(users.disable_user, s, username, body.by, crypto=cipher)
+        for iid in ids: kick(s, placed_nodes(s, iid))
+        return user_json(u, s)
+
+    @app.post("/v1/users/{username}/enable", dependencies=[Depends(auth)])
+    def enable_user(username: str, s: Session = Depends(db)):
+        ids = s.scalars(select(Peer.instance_id).where(Peer.owner == users.normalize_username(username))).all()
+        u = user_call(users.enable_user, s, username, crypto=cipher)
+        for iid in ids: kick(s, placed_nodes(s, iid))
+        return user_json(u, s)
+
+    @app.delete("/v1/users/{username}", dependencies=[Depends(auth)], status_code=204)
+    def delete_user(username: str, s: Session = Depends(db)):
+        ids = s.scalars(select(Peer.instance_id).where(Peer.owner == users.normalize_username(username))).all()
+        user_call(users.delete_user, s, username, crypto=cipher)
+        for iid in ids: kick(s, placed_nodes(s, iid))
+        return Response(status_code=204)
+
+    def device_json(p, s):
+        instance = s.get(Instance, p.instance_id)
+        scrapes = app.state.reconciler.scrapes() if app.state.reconciler and callable(getattr(app.state.reconciler, "scrapes", None)) else {}
+        stats = device_stats(scrapes, instance.name, p.public_key, time.time())
+        return {**peer(p), "instance": instance.name, **stats}
+
+    def get_device(s, ident):
+        p = s.get(Peer, ident)
+        if not p or p.owner == service.PROBE_OWNER:
+            raise HTTPException(404, detail={"error": "not_found", "detail": "device not found"})
+        return p
+
+    @app.get("/v1/users/{username}/devices", dependencies=[Depends(auth)])
+    def user_devices(username: str, s: Session = Depends(db)):
+        u = user_call(users.get_user, s, username)
+        peers = s.scalars(select(Peer).where(Peer.owner == u.username).order_by(Peer.id)).all()
+        return [device_json(p, s) for p in peers]
+
+    @app.post("/v1/users/{username}/devices", dependencies=[Depends(auth)], status_code=201)
+    def create_user_device(username: str, body: DeviceIn, s: Session = Depends(db)):
+        if not s.get(Instance, body.instance_id):
+            raise HTTPException(404, detail={"error": "not_found", "detail": "instance not found"})
+        p = user_call(users.create_device, s, username, body.name, body.instance_id, crypto=cipher, admin_bypass=body.admin_bypass)
+        kick(s, placed_nodes(s, body.instance_id))
+        return device_json(p, s)
+
+    @app.get("/v1/devices/{ident}", dependencies=[Depends(auth)])
+    def read_device(ident: int, s: Session = Depends(db)):
+        return device_json(get_device(s, ident), s)
+
+    @app.patch("/v1/devices/{ident}", dependencies=[Depends(auth)])
+    def patch_device(ident: int, body: DevicePatchIn, s: Session = Depends(db)):
+        p = get_device(s, ident)
+        data = body.model_dump(exclude_unset=True)
+        if data.get("name") is not None:
+            user_call(users.rename_device, s, ident, data["name"])
+        if data.get("enabled") is not None:
+            service.set_peer_enabled(s, ident, data["enabled"], cipher)
+            kick(s, placed_nodes(s, p.instance_id))
+        s.refresh(p)
+        return device_json(p, s)
+
+    @app.delete("/v1/devices/{ident}", dependencies=[Depends(auth)], status_code=204)
+    def delete_device(ident: int, s: Session = Depends(db)):
+        p = get_device(s, ident)
+        nodes = placed_nodes(s, p.instance_id)
+        service.remove_peer(s, ident, cipher)
+        kick(s, nodes)
+        return Response(status_code=204)
+
+    @app.post("/v1/requests", dependencies=[Depends(auth)], status_code=201)
+    def create_request(body: RequestIn, s: Session = Depends(db)):
+        r = user_call(users.create_request, s, body.type, body.tg_id, body.username, body.first_name, body.last_name, body.requested_limit)
+        return request_json(r)
+
+    def request_json(r):
+        return dict(id=r.id,type=r.type,status=r.status,tg_id=r.tg_id,username=r.username,first_name=r.first_name,last_name=r.last_name,requested_limit=r.requested_limit,previous_limit=r.previous_limit,admin_id=r.admin_id,admin_username=r.admin_username,requested_at=r.requested_at,decided_at=r.decided_at,notification_refs=r.notification_refs)
+
+    @app.get("/v1/requests", dependencies=[Depends(auth)])
+    def get_requests(status: str | None = None, type: str | None = None, username: str | None = None, limit: int = Query(100,ge=1,le=500), offset: int = Query(0,ge=0), s: Session = Depends(db)):
+        return [request_json(r) for r in users.list_requests(s,status,type,username,limit,offset)]
+
+    @app.get("/v1/requests/{ident}", dependencies=[Depends(auth)])
+    def get_request(ident: int, s: Session = Depends(db)):
+        r=s.get(UserRequest,ident)
+        if not r: raise HTTPException(404,detail={"error":"not_found","detail":"request not found"})
+        return request_json(r)
+
+    @app.post("/v1/requests/{ident}/approve", dependencies=[Depends(auth)])
+    def approve_request(ident: int, body: ApproveIn, s: Session = Depends(db)):
+        r=user_call(users.approve_request,s,ident,body.admin_tg_id,body.admin_username,body.default_limit)
+        return request_json(r)
+
+    @app.post("/v1/requests/{ident}/decline", dependencies=[Depends(auth)])
+    def decline_request(ident: int, body: DecisionIn, s: Session = Depends(db)):
+        return request_json(user_call(users.decline_request,s,ident,body.admin_tg_id,body.admin_username))
+
+    @app.put("/v1/requests/{ident}/refs", dependencies=[Depends(auth)])
+    def request_refs(ident: int, body: RefsIn, s: Session = Depends(db)):
+        return request_json(user_call(users.set_request_refs,s,ident,body.refs))
 
     return app

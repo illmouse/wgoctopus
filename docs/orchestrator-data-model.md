@@ -15,6 +15,10 @@ Synthetic probe status (UNKNOWN, UP, DOWN) is evaluated from runner scrapes in m
 
 SQLAlchemy 2.x models are migrated by Alembic into one SQLite database (WAL and foreign keys enabled).
 
+## Bot users
+
+`bot_users` stores normalized lowercase Telegram usernames, optional unique Telegram IDs, role, enabled status, configuration limit (`-1` means unlimited), language, and disable metadata. `user_requests` stores access/limit requests, decisions, and notification references; `admin_username_history` reserves usernames previously used by administrators. `peers.owner` remains a free-form username string (not a foreign key) for importer and probe compatibility. User disable/enable operations cascade to owned peers and update rendered node revisions; user deletion removes owned peers. Only Telegram IDs, usernames, and requested first/last names are stored for bot identity; user/request audit events contain only usernames or request IDs, never personal names.
+
 | Table | Purpose |
 |---|---|
 | `instances` | Shared server interface, listen port, CIDR, keys, AWG obfuscation, and optional network defaults. |

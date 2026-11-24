@@ -138,3 +138,28 @@ def test_probe_migration_from_hops_preserves_data(tmp_path):
         with pytest.raises(IntegrityError):
             connection.execute(text("INSERT INTO probes (hop_id, instance_id, runner_node_id, peer_id, created_at) VALUES (1, 1, 1, 1, '2024-01-01')"))
     engine.dispose()
+
+
+def test_bot_user_migration_preserves_data_and_is_idempotent(tmp_path):
+    url = f"sqlite:///{tmp_path / 'bot-users.db'}"
+    here = Path(__file__).resolve().parents[1]
+    config = Config(str(here / "alembic.ini"))
+    config.set_main_option("script_location", str(here / "migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "0007_pull")
+    engine = make_engine(url)
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO instances (id,name,listen_port,address,private_key_enc,public_key,obfuscation,created_at) VALUES (1,'wg0',51820,'192.0.2.2/24','key','public','{}','2024-01-01')"))
+    engine.dispose()
+    upgrade_to_head(url)
+    engine = make_engine(url)
+    with engine.begin() as connection:
+        assert connection.execute(text("SELECT name FROM instances WHERE id=1")).scalar_one() == "wg0"
+        assert connection.execute(text("SELECT count(*) FROM bot_users")).scalar_one() == 0
+    engine.dispose()
+    upgrade_to_head(url)
+    engine = make_engine(url)
+    with engine.begin() as connection:
+        assert connection.execute(text("SELECT name FROM instances WHERE id=1")).scalar_one() == "wg0"
+        assert connection.execute(text("SELECT count(*) FROM bot_users")).scalar_one() == 0
+    engine.dispose()

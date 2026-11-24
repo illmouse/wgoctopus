@@ -89,3 +89,13 @@ setting. Client settings do not change agent desired state or node revisions.
 PATCH also accepts `mtu`, `egress_interface`, and `snat_ip`, which retain their
 existing desired-state revision behavior. Private key import is deliberately
 not available through HTTP.
+
+## Bot users, requests and devices
+
+Used by the peer-management bot; all endpoints need the admin bearer token. Users are keyed by lowercase Telegram username; a device is a peer whose `owner` is that username (probe peers are never exposed).
+
+- `POST /v1/users/resolve` `{tg_id, username?, language?}` resolves the caller (binds a pre-registered username to a Telegram id, follows username renames); 404 for unknown users.
+- `PUT /v1/users/{username}` `{role?, config_limit?}` creates/ensures a user (201 created, 200 existed). `GET /v1/users?status=&role=`, `GET|PATCH|DELETE /v1/users/{username}` (PATCH: `config_limit` (-1 unlimited), `role`; promotion needs a Telegram id, the last admin cannot be demoted).
+- `POST /v1/users/{username}/disable` `{by}` / `enable`: disables or enables all owned devices (admins cannot be disabled); node revisions are bumped and reconciled.
+- `POST|GET /v1/requests` (`type` access|limit), `GET /v1/requests/{id}`, `POST /v1/requests/{id}/approve` `{admin_tg_id, admin_username, default_limit}` / `decline`, `PUT /v1/requests/{id}/refs` `{refs: [[chat_id, message_id], ...]}`. Decisions are atomic; a second decision returns 409.
+- `GET /v1/users/{username}/devices`, `POST /v1/users/{username}/devices` `{instance_id, name?, admin_bypass?}` (403 at the device limit, 409 duplicate name, auto name = 8 hex chars), `GET|PATCH|DELETE /v1/devices/{id}` (PATCH: `name`, `enabled`). Device objects include `latest_handshake_at`, `rx`, `tx` and `active` (handshake within 180 s) from the cached node scrapes. The client config is `GET /v1/peers/{id}/config`.
