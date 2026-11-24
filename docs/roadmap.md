@@ -15,6 +15,7 @@
 4a. **Parameter generation (adopt from [VAIPROG/Any-Tech-ARCHITECT](https://github.com/VAIPROG/Any-Tech-ARCHITECT), MIT):** complete — 4a-1 generation of Jc/Jmin/Jmax, S1-S4 and ranged H1-H4; 4a-2 I1-I5 CPS profiles; 4a-3 additional 3.x fields (including RandomTrailers/DisableCookies). 1.0/1.5 are intentionally unsupported in 4a-1. Related: awg-containers-and-tools / `awg-tool` (UAPI-direct deployment).
  5. **Operations:** bot using orchestrator API and import of existing instances. 5.4a import tooling done; applying to real DB + cutover pending.
 6. **Failover:** in progress — 5.1a engine, 5.1b API/lifecycle, 5.2 Telegram confirmation buttons and 5.3 real-host e2e (34 PASS) done. Confirmed active/standby failover, then active-active if needed.
+   - 6.2 Legacy Telegram `users.db` importer: done.
 
 The data plane must remain independent of orchestrator availability. Back up the orchestrator store; node backups are not required. Active-active would use hop-side nftables `jhash` selection by client source IP.
 # Stage 3.5 — REST API and container

@@ -31,3 +31,12 @@ checksum, verify the source backup independently, and run dry-run before
 committing. The importer does not import nodes, placements, observed state,
 or runtime configuration. It does not place instances on nodes. Place the
 instance explicitly after import and before cutover.
+
+## Legacy Telegram users
+
+Import the old bot's `users.db` read-only with
+`python -m wgoctopus_orch import-users --source /path/to/users.db [--dry-run] [--db URL]`.
+Users, requests, and admin username history are imported transactionally and
+idempotently. The key/value report contains counts only; invalid usernames or
+Telegram ID conflicts abort the whole import. Dry-run validates then rolls
+back. Exit codes are `0` success and `1` failure (`2` for usage errors).
