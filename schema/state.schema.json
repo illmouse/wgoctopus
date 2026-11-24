@@ -75,7 +75,15 @@
         "i2": {"type": "string", "maxLength": 4096, "pattern": "^(<(b 0x([0-9a-fA-F]{2})*|t|c|r [0-9]+|rc [0-9]+|rd [0-9]+|d|ds|dz)>)+$"},
         "i3": {"type": "string", "maxLength": 4096, "pattern": "^(<(b 0x([0-9a-fA-F]{2})*|t|c|r [0-9]+|rc [0-9]+|rd [0-9]+|d|ds|dz)>)+$"},
         "i4": {"type": "string", "maxLength": 4096, "pattern": "^(<(b 0x([0-9a-fA-F]{2})*|t|c|r [0-9]+|rc [0-9]+|rd [0-9]+|d|ds|dz)>)+$"},
-        "i5": {"type": "string", "maxLength": 4096, "pattern": "^(<(b 0x([0-9a-fA-F]{2})*|t|c|r [0-9]+|rc [0-9]+|rd [0-9]+|d|ds|dz)>)+$"}
+        "i5": {"type": "string", "maxLength": 4096, "pattern": "^(<(b 0x([0-9a-fA-F]{2})*|t|c|r [0-9]+|rc [0-9]+|rd [0-9]+|d|ds|dz)>)+$"},
+        "header_protection_key": {"$ref": "#/$defs/key"},
+        "content_padding_addition": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "rekey_after_time": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "rekey_timeout": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "reject_after_time": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "keepalive_timeout": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "max_handshake_attempts": {"type":"string","pattern":"^[0-9]+(-[0-9]+)?$"},
+        "random_trailers": {"type":"boolean"}, "disable_cookies": {"type":"boolean"}
       },
       "description": "Changing any S/H value is dangerous and may break all clients. Validate value semantics against AWG 3.1."
     },

@@ -45,19 +45,41 @@ func Plan(w state.Interface, l uapi.Live) PlanResult {
 		"s1": strconv.Itoa(int(w.Obfuscation.S1)), "s2": strconv.Itoa(int(w.Obfuscation.S2)), "s3": strconv.Itoa(int(w.Obfuscation.S3)), "s4": strconv.Itoa(int(w.Obfuscation.S4)),
 		"h1": w.Obfuscation.H1, "h2": w.Obfuscation.H2, "h3": w.Obfuscation.H3, "h4": w.Obfuscation.H4,
 		"i1": w.Obfuscation.I1, "i2": w.Obfuscation.I2, "i3": w.Obfuscation.I3, "i4": w.Obfuscation.I4, "i5": w.Obfuscation.I5,
+		"header_protection_key":    w.Obfuscation.HeaderProtectionKey,
+		"content_padding_addition": w.Obfuscation.ContentPaddingAddition,
+		"rekey_after_time":         w.Obfuscation.RekeyAfterTime, "rekey_timeout": w.Obfuscation.RekeyTimeout,
+		"reject_after_time": w.Obfuscation.RejectAfterTime, "keepalive_timeout": w.Obfuscation.KeepaliveTimeout,
+		"max_handshake_attempts": w.Obfuscation.MaxHandshakeAttempts,
+		"random_trailers":        boolUAPI(w.Obfuscation.RandomTrailers), "disable_cookies": boolUAPI(w.Obfuscation.DisableCookies),
 	}
 	if w.ListenPort != 0 || w.Mode != "client" {
 		fields["listen_port"] = strconv.Itoa(int(w.ListenPort))
 	}
 	defaults := map[string]string{"jc": "0", "jmin": "0", "jmax": "0", "s1": "0", "s2": "0", "s3": "0", "s4": "0", "h1": "0", "h2": "0", "h3": "0", "h4": "0", "i1": "", "i2": "", "i3": "", "i4": "", "i5": ""}
+	for _, k := range []string{"random_trailers", "disable_cookies"} {
+		defaults[k] = "0"
+	}
+	for _, k := range []string{"header_protection_key", "content_padding_addition", "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts"} {
+		defaults[k] = ""
+	}
 	for k, v := range fields {
 		old := l.Fields[k]
+		if isRange(k) && v == "" && canonicalRange(old) != "0" {
+			v = "0"
+		}
 		if old == "" {
 			old = defaults[k]
 		}
-		if normalize(old) != normalize(v) {
+		equal := normalize(old) == normalize(v)
+		if isRange(k) {
+			equal = canonicalRange(old) == canonicalRange(v)
+		}
+		if k == "header_protection_key" {
+			equal = normalizeHeaderKey(old) == normalizeHeaderKey(v)
+		}
+		if !equal {
 			r.Ops.Fields[k] = v
-			if !newInterface && (k == "private_key" || k == "listen_port" || strings.HasPrefix(k, "s") || strings.HasPrefix(k, "h") || strings.HasPrefix(k, "i") || k == "jc" || k == "jmin" || k == "jmax") {
+			if !newInterface && (k == "private_key" || k == "listen_port" || strings.HasPrefix(k, "s") || strings.HasPrefix(k, "h") || strings.HasPrefix(k, "i") || k == "jc" || k == "jmin" || k == "jmax" || k == "header_protection_key" || k == "random_trailers" || k == "disable_cookies" || k == "content_padding_addition") {
 				reason := k
 				if !contains(r.Dangerous, reason) {
 					r.Dangerous = append(r.Dangerous, reason)
@@ -125,6 +147,37 @@ func Plan(w state.Interface, l uapi.Live) PlanResult {
 	}
 	sort.Strings(r.Dangerous)
 	return r
+}
+func isRange(k string) bool {
+	return k == "content_padding_addition" || k == "rekey_after_time" || k == "rekey_timeout" || k == "reject_after_time" || k == "keepalive_timeout" || k == "max_handshake_attempts"
+}
+func boolUAPI(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
+}
+func normalizeHeaderKey(s string) string {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err == nil && len(b) == 32 {
+		for _, v := range b {
+			if v != 0 {
+				return base64.StdEncoding.EncodeToString(b)
+			}
+		}
+		return ""
+	}
+	return normalizeKey(s)
+}
+func canonicalRange(v string) string {
+	if v == "" || v == "0" || v == "0-0" {
+		return "0"
+	}
+	p := strings.Split(v, "-")
+	if len(p) == 2 && p[0] == p[1] {
+		return p[0]
+	}
+	return v
 }
 
 func sameEndpoint(a, b string) bool {

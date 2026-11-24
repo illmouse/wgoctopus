@@ -1,0 +1,26 @@
+{
+  "revision": 1,
+  "interfaces": [{
+    "name": "awg0",
+    "listen_port": 51820,
+    "private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "address": "10.0.0.1/24",
+    "obfuscation": {
+      "jc": 0, "jmin": 0, "jmax": 0,
+      "s1": 12, "s2": 12, "s3": 12, "s4": 12,
+      "h1": "1", "h2": "2", "h3": "3", "h4": "4",
+      "header_protection_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+      "random_trailers": true,
+      "content_padding_addition": "4-8",
+      "rekey_after_time": "30",
+      "rekey_timeout": "5-10",
+      "reject_after_time": "3600",
+      "keepalive_timeout": "10",
+      "max_handshake_attempts": "5"
+    },
+    "peers": [{
+      "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "allowed_ips": ["10.0.0.2/32"]
+    }]
+  }]
+}

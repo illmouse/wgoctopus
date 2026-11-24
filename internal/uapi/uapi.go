@@ -114,6 +114,16 @@ func Parse(r io.Reader) (Live, error) {
 			}
 			d.Peers[current.PublicKey] = *current
 		} else {
+			if k == "header_protection_key" {
+				if strings.Trim(v, "0") == "" {
+					v = ""
+				} else {
+					v = hexToBase64(v)
+				}
+			}
+			if isRangeField(k) {
+				v = canonicalRange(v)
+			}
 			if k == "private_key" {
 				d.PrivateKey = hexToBase64(v)
 				d.Fields[k] = d.PrivateKey
@@ -147,10 +157,15 @@ func keyHex(s string) (string, error) {
 func decode64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
 func Serialize(o Ops) (string, error) {
 	var b strings.Builder
-	keys := []string{"private_key", "listen_port", "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5"}
+	keys := []string{"private_key", "listen_port", "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "header_protection_key", "content_padding_addition", "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts", "random_trailers", "disable_cookies"}
 	for _, k := range keys {
 		if v, ok := o.Fields[k]; ok {
-			if k == "private_key" {
+			if k == "private_key" || k == "header_protection_key" {
+				if k == "header_protection_key" && (v == "" || strings.Trim(v, "0") == "") {
+					v = strings.Repeat("0", 64)
+					fmt.Fprintf(&b, "%s=%s\n", k, v)
+					continue
+				}
 				x, e := keyHex(v)
 				if e != nil {
 					return "", e
@@ -203,6 +218,20 @@ func Serialize(o Ops) (string, error) {
 	}
 	b.WriteByte('\n')
 	return b.String(), nil
+}
+func isRangeField(k string) bool {
+	switch k {
+	case "content_padding_addition", "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts":
+		return true
+	}
+	return false
+}
+func canonicalRange(v string) string {
+	p := strings.Split(v, "-")
+	if len(p) == 2 && p[0] == p[1] {
+		return p[0]
+	}
+	return v
 }
 
 // Get retrieves the current device state.

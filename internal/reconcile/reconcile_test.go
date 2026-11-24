@@ -120,6 +120,55 @@ func TestApplyEndpointKeepaliveIsIdempotent(t *testing.T) {
 func desired(peers ...state.Peer) state.Interface {
 	return state.Interface{PrivateKey: testKey, ListenPort: 51820, Obfuscation: state.Obfuscation{H1: "1", H2: "2", H3: "3", H4: "4"}, Peers: peers}
 }
+
+func TestAWG3PlanNoopAndDangerousClassification(t *testing.T) {
+	w := desired()
+	w.Obfuscation.S1, w.Obfuscation.S2, w.Obfuscation.S3, w.Obfuscation.S4 = 12, 12, 12, 12
+	w.Obfuscation.RekeyTimeout = "5-10"
+	w.Obfuscation.RandomTrailers = true
+	live := uapi.Live{PrivateKey: liveKey(), Fields: map[string]string{"private_key": liveKey(), "listen_port": "51820", "s1": "12", "s2": "12", "s3": "12", "s4": "12", "h1": "1", "h2": "2", "h3": "3", "h4": "4", "rekey_timeout": "5-10", "random_trailers": "1", "disable_cookies": "0"}, Peers: map[string]uapi.Peer{}}
+	if p := Plan(w, live); len(p.Ops.Fields) != 0 || len(p.Dangerous) != 0 {
+		t.Fatalf("no-op plan %#v", p)
+	}
+	zeroKey := w
+	zeroKey.Obfuscation.HeaderProtectionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	if p := Plan(zeroKey, live); p.Ops.Fields["header_protection_key"] != "" {
+		t.Fatalf("zero header key should match daemon clear: %#v", p.Ops.Fields)
+	}
+	for _, tc := range []struct {
+		name      string
+		dangerous bool
+		change    func(*state.Obfuscation)
+	}{
+		{"header_protection_key", true, func(o *state.Obfuscation) { o.HeaderProtectionKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" }},
+		{"random_trailers", true, func(o *state.Obfuscation) { o.RandomTrailers = false }},
+		{"disable_cookies", true, func(o *state.Obfuscation) { o.DisableCookies = true }},
+		{"content_padding_addition", true, func(o *state.Obfuscation) { o.ContentPaddingAddition = "1-2" }},
+		{"rekey_after_time", false, func(o *state.Obfuscation) { o.RekeyAfterTime = "30" }},
+		{"rekey_timeout", false, func(o *state.Obfuscation) { o.RekeyTimeout = "6-10" }},
+		{"reject_after_time", false, func(o *state.Obfuscation) { o.RejectAfterTime = "40" }},
+		{"keepalive_timeout", false, func(o *state.Obfuscation) { o.KeepaliveTimeout = "10" }},
+		{"max_handshake_attempts", false, func(o *state.Obfuscation) { o.MaxHandshakeAttempts = "5" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := w
+			tc.change(&x.Obfuscation)
+			p := Plan(x, live)
+			if (len(p.Dangerous) > 0) != tc.dangerous {
+				t.Fatalf("plan %#v", p)
+			}
+			if _, ok := p.Ops.Fields[tc.name]; !ok {
+				t.Fatalf("missing op %s: %#v", tc.name, p.Ops.Fields)
+			}
+		})
+	}
+	clearing := w
+	clearing.Obfuscation.ContentPaddingAddition = ""
+	live.Fields["content_padding_addition"] = "2"
+	if p := Plan(clearing, live); p.Ops.Fields["content_padding_addition"] != "0" {
+		t.Fatalf("clear range %#v", p.Ops.Fields)
+	}
+}
 func liveKey() string { return normalizePrivateKey(testKey) }
 func TestApplyNoopAndIdempotent(t *testing.T) {
 	w := desired(state.Peer{PublicKey: testKey, AllowedIPs: []string{"10.0.0.2/24"}})

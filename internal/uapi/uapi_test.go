@@ -24,6 +24,32 @@ func TestParseKeyEncodingAndPeerFields(t *testing.T) {
 	}
 }
 
+func TestAWG3ParseAndSerialize(t *testing.T) {
+	var hexKey string
+	for i := 0; i < 32; i++ {
+		hexKey += "01"
+	}
+	live, err := Parse(strings.NewReader("header_protection_key=" + hexKey + "\ncontent_padding_addition=4-4\nrekey_after_time=5-10\nrandom_trailers=1\ndisable_cookies=0\nerrno=0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.Fields["header_protection_key"] != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || live.Fields["content_padding_addition"] != "4" || live.Fields["rekey_after_time"] != "5-10" {
+		t.Fatalf("fields=%v", live.Fields)
+	}
+	got, err := Serialize(Ops{Fields: map[string]string{"header_protection_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=", "content_padding_addition": "4-8", "random_trailers": "1", "disable_cookies": "0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "header_protection_key=" + hexKey + "\ncontent_padding_addition=4-8\nrandom_trailers=1\ndisable_cookies=0\n\n"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	got, err = Serialize(Ops{Fields: map[string]string{"header_protection_key": ""}})
+	if err != nil || got != "header_protection_key="+strings.Repeat("0", 64)+"\n\n" {
+		t.Fatalf("clear got=%q err=%v", got, err)
+	}
+}
+
 func TestParseAWGGetWithOmittedDefaults(t *testing.T) {
 	key := "00" + strings.Repeat("01", 30) + "41"
 	privateKey := make([]byte, 32)

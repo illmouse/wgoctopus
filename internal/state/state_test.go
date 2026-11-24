@@ -3,8 +3,49 @@ package state
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
+
+func TestAWG3OptionalValidationChecksumAndRedaction(t *testing.T) {
+	b, err := os.ReadFile("../../schema/examples/state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s State
+	if err = json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	base := s.Checksum()
+	if got := s.Checksum(); got != base {
+		t.Fatal("legacy checksum changed")
+	}
+	o := &s.Interfaces[0].Obfuscation
+	o.HeaderProtectionKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+	o.S1, o.S2, o.S3, o.S4 = 12, 12, 12, 12
+	o.RandomTrailers = true
+	if err = s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Checksum() == base {
+		t.Fatal("AWG 3 fields missing from checksum")
+	}
+	if o.String() != "[redacted]" || o.LogValue().String() != "[redacted]" {
+		t.Fatal("obfuscation key not redacted")
+	}
+	secret := o.HeaderProtectionKey
+	o.S1 = 11
+	if err = s.Validate(); err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("unsafe key validation error: %v", err)
+	}
+	for _, bad := range []string{"a-b", "4-3", "4294967296", "4-4294967296", "1-2-3"} {
+		o.S1 = 12
+		o.RekeyTimeout = bad
+		if s.Validate() == nil {
+			t.Errorf("accepted range %q", bad)
+		}
+	}
+}
 
 func TestExampleAndInvalid(t *testing.T) {
 	b, e := os.ReadFile("../../schema/examples/state.example.json")

@@ -39,23 +39,36 @@ func (Interface) String() string       { return "[redacted]" }
 func (Interface) LogValue() slog.Value { return slog.StringValue("[redacted]") }
 
 type Obfuscation struct {
-	JC   uint32 `json:"jc"`
-	JMin uint32 `json:"jmin"`
-	JMax uint32 `json:"jmax"`
-	S1   uint16 `json:"s1"`
-	S2   uint16 `json:"s2"`
-	S3   uint16 `json:"s3"`
-	S4   uint16 `json:"s4"`
-	H1   string `json:"h1"`
-	H2   string `json:"h2"`
-	H3   string `json:"h3"`
-	H4   string `json:"h4"`
-	I1   string `json:"i1,omitempty"`
-	I2   string `json:"i2,omitempty"`
-	I3   string `json:"i3,omitempty"`
-	I4   string `json:"i4,omitempty"`
-	I5   string `json:"i5,omitempty"`
+	JC                     uint32 `json:"jc"`
+	JMin                   uint32 `json:"jmin"`
+	JMax                   uint32 `json:"jmax"`
+	S1                     uint16 `json:"s1"`
+	S2                     uint16 `json:"s2"`
+	S3                     uint16 `json:"s3"`
+	S4                     uint16 `json:"s4"`
+	H1                     string `json:"h1"`
+	H2                     string `json:"h2"`
+	H3                     string `json:"h3"`
+	H4                     string `json:"h4"`
+	I1                     string `json:"i1,omitempty"`
+	I2                     string `json:"i2,omitempty"`
+	I3                     string `json:"i3,omitempty"`
+	I4                     string `json:"i4,omitempty"`
+	I5                     string `json:"i5,omitempty"`
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
+	RandomTrailers         bool   `json:"random_trailers,omitempty"`
+	DisableCookies         bool   `json:"disable_cookies,omitempty"`
 }
+
+func (Obfuscation) String() string       { return "[redacted]" }
+func (Obfuscation) LogValue() slog.Value { return slog.StringValue("[redacted]") }
+
 type Peer struct {
 	PublicKey           string   `json:"public_key"`
 	PresharedKey        string   `json:"preshared_key,omitempty"`
@@ -125,6 +138,21 @@ func (s State) Validate() error {
 			}
 		}
 		o := in.Obfuscation
+		if o.HeaderProtectionKey != "" {
+			if err := key(o.HeaderProtectionKey); err != nil {
+				return fmt.Errorf("interface %s header_protection_key: must be base64 encoding of 32 bytes", in.Name)
+			}
+			if o.S1 < 12 || o.S2 < 12 || o.S3 < 12 || o.S4 < 12 {
+				return fmt.Errorf("interface %s: header_protection_key requires s1..s4 >= 12", in.Name)
+			}
+		}
+		for _, r := range []struct{ name, value string }{{"content_padding_addition", o.ContentPaddingAddition}, {"rekey_after_time", o.RekeyAfterTime}, {"rekey_timeout", o.RekeyTimeout}, {"reject_after_time", o.RejectAfterTime}, {"keepalive_timeout", o.KeepaliveTimeout}, {"max_handshake_attempts", o.MaxHandshakeAttempts}} {
+			if r.value != "" {
+				if _, _, err := parseRange(r.value); err != nil {
+					return fmt.Errorf("interface %s: invalid %s (expected uint32 N or lo-hi)", in.Name, r.name)
+				}
+			}
+		}
 		for _, cps := range []struct{ name, value string }{{"i1", o.I1}, {"i2", o.I2}, {"i3", o.I3}, {"i4", o.I4}, {"i5", o.I5}} {
 			if err := validateCPS(cps.name, cps.value); err != nil {
 				return fmt.Errorf("interface %q: %s has invalid CPS syntax", in.Name, cps.name)
@@ -224,6 +252,24 @@ func (s State) Validate() error {
 		}
 	}
 	return nil
+}
+func parseRange(value string) (uint64, uint64, error) {
+	parts := strings.Split(value, "-")
+	if len(parts) > 2 {
+		return 0, 0, fmt.Errorf("invalid range")
+	}
+	lo, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil {
+		return 0, 0, err
+	}
+	hi := lo
+	if len(parts) == 2 {
+		hi, err = strconv.ParseUint(parts[1], 10, 32)
+		if err != nil || hi < lo {
+			return 0, 0, fmt.Errorf("invalid range")
+		}
+	}
+	return lo, hi, nil
 }
 
 func validIface(name string) bool {
