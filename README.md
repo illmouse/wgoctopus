@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/logo_black.png">
+    <img src="img/logo.png" alt="wgoctopus" width="240">
+  </picture>
+</p>
+
 # wgoctopus
 
 An early-stage orchestrator for fleets of AmneziaWG (AWG 3.1) nodes and UDP hop forwarders. It keeps the desired configuration centrally, renders and reconciles node state, and monitors liveness. Nodes are stateless: a fresh node receives its complete desired state from the orchestrator.
