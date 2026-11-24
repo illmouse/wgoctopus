@@ -1090,7 +1090,13 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 "instances":s.scalar(select(__import__("sqlalchemy").func.count(Instance.id))),"peers":s.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))}
 
     if alert_settings.web_enabled:
-        webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary)
+        def node_view(s, ident):
+            n = s.get(Node, ident)
+            return node(n, s) if n else None
+
+        webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary,
+                    nodes=lambda s: [node(n, s) for n in s.scalars(select(Node).order_by(Node.name))],
+                    node_view=node_view, provision=lambda: app.state.provision)
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

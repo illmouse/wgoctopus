@@ -86,7 +86,7 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log; 7.4c instances + peers; 7.4d failover + requests + bootstrap); k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log: done; 7.4c instances + peers; 7.4d failover + requests + bootstrap); k3s manifests and backups.
 
 ## UI skeleton (7.4a)
 
@@ -108,3 +108,11 @@ Authorization code flow with PKCE (S256). Enabled when `WGOCTOPUS_OIDC_ISSUER`, 
 | `WGOCTOPUS_OIDC_ROLE_MAP` | - | `group=role` pairs, e.g. `wg-admins=admin,wg-ops=operator`; highest matching role wins; no match = denied. |
 
 Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bound to a short-lived HttpOnly cookie), `GET /auth/oidc/callback` (verifies state, exchanges the code with the PKCE verifier, validates the ID token: RS/ES/PS algorithms only, signature via JWKS with one refetch on unknown key, `iss`, `aud`, `exp`, `iat`, `nonce`; then creates a session and redirects to `/`). Accounts are provisioned at the first login (`source=oidc`, no password) and the role is re-evaluated on every login. A disabled account, a name already used by another account, or a missing group mapping is denied (event `web.login_denied` with a reason, no tokens or claims logged). Failures return generic `oidc_denied` (403) or 502 for IdP/network errors.
+
+## Nodes and provisioning pages (7.4b)
+
+- `GET /ui/nodes` (viewer): table of nodes with reconciler state, health, last seen and applied/desired revision; `GET /ui/fragments/nodes` refreshes it every 10 s.
+- `GET /ui/nodes/{id}` (viewer): node details (never the agent token or private keys), recent provisioning jobs, and for admins on SSH-managed nodes a **Provision** button. Protected nodes show a danger button that asks for browser confirmation and posts `?confirm=true`; without it the server answers `confirmation required`.
+- `POST /ui/nodes/{id}/provision` (admin, CSRF): creates the job from the node's stored provision options (the `auto` flag is dropped), starts it in the background, audits `web.provision_start`, and answers `HX-Redirect` to the job page. Business errors (already in progress, confirmation required) come back as an inline message.
+- `GET /ui/jobs/{id}` and `GET /ui/fragments/jobs/{id}` (admin only, logs can contain host details): steps with state and log; the fragment re-polls every 2 s only while the job is `queued` or `running`. `POST /ui/jobs/{id}/cancel` (admin, CSRF) cancels a running job and audits `web.provision_cancel`.
+- Operators and viewers see job states on the node page but cannot open logs or start jobs (403 page / bare 403 for fragments).

@@ -1,0 +1,17 @@
+<table>
+  <thead><tr><th>Name</th><th>Kind</th><th>Mode</th><th>State</th><th>Healthy</th><th>Last seen</th><th>Revision</th><th></th></tr></thead>
+  <tbody>
+  {% for n in nodes %}
+  <tr>
+    <td><a href="/ui/nodes/{{ n.id }}">{{ n.name }}</a></td>
+    <td>{{ n.kind }}</td>
+    <td>{{ n.mgmt_mode }}</td>
+    <td>{% if not n.enabled %}<span class="badge muted">disabled</span>{% elif n.reconciler %}<span class="badge {{ state_class.get(n.reconciler.state, 'bad') }}">{{ n.reconciler.state }}</span>{% else %}-{% endif %}</td>
+    <td>{% if n.observed %}{{ "yes" if n.observed.healthy else "no" }}{% else %}-{% endif %}</td>
+    <td>{{ n.observed.last_seen_at|ts if n.observed else "-" }}</td>
+    <td>{{ n.observed.applied_revision if n.observed else "-" }} / {{ n.desired_revision if n.desired_revision is not none else "-" }}</td>
+    <td>{% if n.protected %}<span class="badge warn">protected</span>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">No nodes yet</td></tr>{% endfor %}
+  </tbody>
+</table>

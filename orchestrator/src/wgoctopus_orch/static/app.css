@@ -19,3 +19,10 @@ button, .button { background:var(--accent); color:#fff; border:0; border-radius:
 .error { color:var(--bad); } .sep { border-top:1px solid var(--line); margin-top:1rem; padding-top:1rem; }
 table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); }
 th, td { text-align:left; padding:.4rem .7rem; border-bottom:1px solid var(--line); } td.muted { color:var(--muted); }
+.badge { display:inline-block; padding:0 .5rem; border-radius:10px; font-size:.8rem; background:var(--line); margin-right:.3rem; }
+.badge.ok { background:#d8f0e1; color:var(--ok); } .badge.warn { background:#faecd0; color:var(--warn); }
+.badge.bad { background:#f8d9d9; color:var(--bad); } .badge.muted { color:var(--muted); }
+button.danger { background:var(--bad); }
+dl { display:grid; grid-template-columns:max-content 1fr; gap:.2rem 1.2rem; margin:0; } dt { color:var(--muted); } dd { margin:0; }
+pre { background:#10151f; color:#d7dde8; padding:.6rem; border-radius:4px; overflow:auto; max-height:22rem; white-space:pre-wrap; }
+ol.steps { padding-left:1.2rem; } ol.steps li { margin-bottom:.6rem; }

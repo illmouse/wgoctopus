@@ -14,7 +14,7 @@
 <header class="bar">
   <strong class="brand">wgoctopus</strong>
   <nav>
-    {% for href, label in nav %}<a href="{{ href }}"{% if path == href %} class="active"{% endif %}>{{ label }}</a>{% endfor %}
+    {% for href, label in nav %}<a href="{{ href }}"{% if path == href or (href != "/ui/" and path.startswith(href)) %} class="active"{% endif %}>{{ label }}</a>{% endfor %}
   </nav>
   <span class="who">{{ info.username }} <em>{{ info.role }}</em> <button type="button" data-logout>Log out</button></span>
 </header>
