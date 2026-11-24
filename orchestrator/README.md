@@ -4,6 +4,8 @@ The orchestrator is the central desired-state store, REST API, and in-process re
 
 ## Layout and checks
 
+Offline imports: see [`../docs/import.md`](../docs/import.md) for AmneziaWG and wg-easy CLI usage.
+
 - `src/wgoctopus_orch/`: configuration, encryption, database, models, key helpers, service operations, and rendering.
 - `migrations/`: Alembic environment and versioned schema.
 - `tests/`: unit and integration tests.
@@ -56,6 +58,8 @@ Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPU
 | `WGOCTOPUS_CLIENT_ENDPOINT_HOST` | unset | Default client config endpoint |
 
 Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
+
+Offline AmneziaWG and wg-easy imports are available with `python -m wgoctopus_orch import`; see [`docs/import.md`](../docs/import.md). 5.4a import tooling is done; applying to the real DB and cutover are pending. Imports never place instances on nodes.
 # Telegram callback environment
 
 | Variable | Default | Description |
