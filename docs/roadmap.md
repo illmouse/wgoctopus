@@ -10,6 +10,7 @@
    - 4.3b-API Probe REST API and hidden system peers: done.
    - 4.3b-3 Synthetic-probe status evaluation, API, metrics, and transition events: done. 
    - 4.3c End-to-end probe through a real hop to a real node (`make e2e-orch-probe`, 21 PASS): done. It found and fixed: SQLite busy timeout, adoption of an already-applied revision, client-mode handshake keeper, conntrack flush for added hop routes.
+   - 4.5 Pull mode (node-initiated SSH reverse tunnel, `mgmt_mode` push|pull|auto): done — agent client, orchestrator SSH endpoint, API/metrics, and real-host e2e through `ssh -R` (`make e2e-orch-pull`, 29 PASS).
    - 4.4 Telegram notifications for node/probe/switch events, flap suppression, and rate limiting: done. Confirmation buttons for promotion are part of the failover stage.
 4a. **Parameter generation (adopt from [VAIPROG/Any-Tech-ARCHITECT](https://github.com/VAIPROG/Any-Tech-ARCHITECT), MIT):** complete — 4a-1 generation of Jc/Jmin/Jmax, S1-S4 and ranged H1-H4; 4a-2 I1-I5 CPS profiles; 4a-3 additional 3.x fields (including RandomTrailers/DisableCookies). 1.0/1.5 are intentionally unsupported in 4a-1. Related: awg-containers-and-tools / `awg-tool` (UAPI-direct deployment).
  5. **Operations:** bot using orchestrator API and import of existing instances. 5.4a import tooling done; applying to real DB + cutover pending.

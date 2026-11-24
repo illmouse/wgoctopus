@@ -85,3 +85,7 @@ services:
 volumes:
   wgoctopus-state:
 ```
+
+## Pull-mode e2e
+
+`make e2e-orch-pull HOST=root@host` starts a local orchestrator with `WGOCTOPUS_PULL_LISTEN`, forwards that listener to the host with `ssh -R`, and runs a real agent there with `--pull-*` flags. It checks connect/deny, reconciliation only through the tunnel, reconnect after orchestrator and agent restarts, `auto` fallback from a closed SSH port, loss/recovery of the tunnel, and host cleanup (firewall baseline and containers unchanged).
