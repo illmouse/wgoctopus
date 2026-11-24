@@ -48,6 +48,7 @@ class Node(Base):
     mgmt_mode: Mapped[str] = mapped_column(String, nullable=False)
     agent_port: Mapped[int] = mapped_column(Integer, default=18080, nullable=False)
     agent_token_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    pull_public_key: Mapped[str | None] = mapped_column(Text)
     egress_interface: Mapped[str | None] = mapped_column(String(15))
     snat_ip: Mapped[str | None] = mapped_column(String)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

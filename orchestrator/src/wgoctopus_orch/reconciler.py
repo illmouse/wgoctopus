@@ -283,10 +283,9 @@ class Reconciler:
                 await self.reconcile_once(ids)
 
 
-def build_reconciler(settings, session_factory=None):
+def build_reconciler(settings, session_factory=None, pull_server=None):
     if session_factory is None:
         from .db import make_engine, make_session_factory
         session_factory = make_session_factory(make_engine())
-    from .transport import DirectHttpTransport, SshTunnelTransport
-    transport_cls = DirectHttpTransport if settings.transport == "direct" else SshTunnelTransport
-    return Reconciler(session_factory, lambda _node: transport_cls(settings), settings)
+    from .transport import RoutingTransport
+    return Reconciler(session_factory, lambda _node: RoutingTransport(settings, pull_server), settings)

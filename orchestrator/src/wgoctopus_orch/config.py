@@ -1,6 +1,7 @@
 """Environment-backed application settings."""
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,6 +52,9 @@ class Settings:
     telegram_buttons: bool = False
     telegram_allowed_user_ids: tuple[int, ...] = ()
     telegram_poll_timeout: int = 25
+    pull_listen: str = ""
+    pull_host_key_file: str | None = None
+    pull_login_timeout: float = 20
 
     @property
     def telegram_buttons_enabled(self):
@@ -123,4 +127,11 @@ class Settings:
                     float(os.getenv("WGOCTOPUS_FAILOVER_EVAL_INTERVAL", "15")),
                     buttons == "true" or (buttons == "auto" and alerts_enabled and bool(allowed_ids)),
                     allowed_ids, poll_timeout)
-        return settings
+        pull_listen = os.getenv("WGOCTOPUS_PULL_LISTEN", "")
+        if pull_listen and not re.fullmatch(r"(?:\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):[0-9]{1,5}", pull_listen):
+            raise ValueError("WGOCTOPUS_PULL_LISTEN must be host:port")
+        if pull_listen and int(pull_listen.rsplit(":", 1)[1]) > 65535:
+            raise ValueError("WGOCTOPUS_PULL_LISTEN port must be <= 65535")
+        return cls(**{**settings.__dict__, "pull_listen": pull_listen,
+                      "pull_host_key_file": os.getenv("WGOCTOPUS_PULL_HOST_KEY_FILE"),
+                      "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20"))})

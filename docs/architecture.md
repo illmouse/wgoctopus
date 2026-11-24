@@ -94,3 +94,6 @@ Agents may optionally establish an outbound, host-key-pinned SSH connection
 and reverse-forward their API to the orchestrator. This is a fallback to the
 usual orchestrator-initiated tunnel; API authentication and bearer-token
 requirements remain unchanged.
+# Pull mode (orchestrator side)
+
+In pull mode the orchestrator accepts agent-initiated SSH connections and exposes only an SSH reverse TCP forward bound to loopback. The node's configured OpenSSH public key authenticates the connection; HTTP requests to the forwarded agent API retain the existing bearer-token contract. Configure the listener and pinned host key fingerprint out of band.

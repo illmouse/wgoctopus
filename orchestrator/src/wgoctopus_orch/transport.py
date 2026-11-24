@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import asyncssh
@@ -112,3 +112,67 @@ class DirectHttpTransport(AgentTransport):
             yield AgentSession(client)
         finally:
             await client.aclose()
+
+
+class PullTransport(AgentTransport):
+    def __init__(self, server, *, settings=None, crypto=None):
+        self.server, self.settings = server, settings or Settings.from_env()
+        self.crypto = crypto or Crypto()
+
+    @asynccontextmanager
+    async def open(self, node):
+        port = self.server.get_port(node.id)
+        if port is None:
+            raise ConnectionError("pull tunnel not connected")
+        client = httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", headers={
+            "Authorization": f"Bearer {self.crypto.decrypt(node.agent_token_enc)}"})
+        try:
+            yield AgentSession(client)
+        finally:
+            await client.aclose()
+
+
+class AutoTransport(AgentTransport):
+    def __init__(self, ssh_transport, pull_transport, server):
+        self.ssh_transport, self.pull_transport, self.server = ssh_transport, pull_transport, server
+
+    @asynccontextmanager
+    async def open(self, node):
+        stack = AsyncExitStack()
+        try:
+            session = await stack.enter_async_context(self.ssh_transport.open(node))
+        except (OSError, asyncssh.Error, TimeoutError, ValueError):
+            await stack.aclose()
+            if not self.server.is_connected(node.id):
+                raise
+            async with self.pull_transport.open(node) as session:
+                yield session
+        else:
+            try:
+                yield session
+            finally:
+                await stack.aclose()
+
+
+class RoutingTransport(AgentTransport):
+    def __init__(self, settings, server=None, *, crypto=None):
+        self.settings, self.server = settings, server
+        self.ssh = DirectHttpTransport(settings, crypto=crypto) if settings.transport == "direct" else SshTunnelTransport(settings, crypto=crypto)
+        self.pull = PullTransport(server, settings=settings, crypto=crypto) if server else None
+
+    def open(self, node):
+        if node.mgmt_mode == "push":
+            return self.ssh.open(node)
+        if node.mgmt_mode == "pull":
+            return self.pull.open(node) if self.pull else _not_connected()
+        if node.mgmt_mode == "auto":
+            if self.pull:
+                return AutoTransport(self.ssh, self.pull, self.server).open(node)
+            return self.ssh.open(node)
+        return _not_connected()
+
+
+@asynccontextmanager
+async def _not_connected():
+    raise ConnectionError("pull tunnel not connected")
+    yield

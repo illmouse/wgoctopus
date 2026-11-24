@@ -30,6 +30,9 @@ Push delivery defaults to an SSH local-forward tunnel from the orchestrator to t
 | Variable | Default | Purpose |
 |---|---|---|
 | `WGOCTOPUS_TRANSPORT` | `ssh` | `ssh` or explicitly selected `direct` |
+| `WGOCTOPUS_PULL_LISTEN` | (disabled) | Optional inbound pull listener address (`host:port`). |
+| `WGOCTOPUS_PULL_HOST_KEY_FILE` | (generated in memory) | Ed25519 SSH server host-key path; existing files must be private. |
+| `WGOCTOPUS_PULL_LOGIN_TIMEOUT` | `20` | SSH login timeout in seconds. |
 | `WGOCTOPUS_SSH_KEY_FILE` | — | SSH client private-key path |
 | `WGOCTOPUS_SSH_KEY_PASSPHRASE_FILE` | — | Optional protected passphrase file |
 | `WGOCTOPUS_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | Known-hosts file; TOFU creates it with mode 0600 |
