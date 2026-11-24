@@ -4,8 +4,9 @@ Pages authenticate with the session cookie only (never the static bearer token) 
 never expose /v1 to cookie sessions; they call the same service functions as the API.
 """
 from pathlib import Path
+from urllib.parse import parse_qs
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -23,7 +24,8 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
-NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes")]
+NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes"), ("/ui/instances", "Instances")]
+PEER_PAGE = 50
 STATE_CLASS = {"IN_SYNC": "ok", "SYNCING": "warn", "DISABLED": "muted", "UNKNOWN": "muted",
                "succeeded": "ok", "running": "warn", "queued": "warn", "failed": "bad", "cancelled": "muted",
                "ok": "ok", "pending": "muted", "skipped": "muted"}
@@ -40,12 +42,14 @@ def build_env():
     return env
 
 
-def mount(app, *, sessions, lookup, status, nodes, node_view, provision):
+def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instances, instance_view, peers_page, ops):
     """Register UI routes.
 
     `lookup(cookie)` returns a session info or None; `status(session)` is the fleet summary;
     `nodes(session)` lists node views, `node_view(session, id)` returns one or None;
-    `provision()` returns the provisioning runner.
+    `provision()` returns the provisioning runner; `instances(session)`, `instance_view(session, id)` and
+    `peers_page(session, id, limit, offset)` read instances and peers; `ops` holds the peer/switch operations
+    shared with the API (add_peer, set_enabled, remove_peer, config, switch).
     """
     env = build_env()
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -178,3 +182,105 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision):
         with sessions.begin() as s:
             service._event(s, "web.provision_cancel", info.username, {"job_id": job_id})
         return Response(status_code=204, headers=SECURITY_HEADERS)
+
+    # instances and peers
+    def audit(kind, info, data):
+        with sessions.begin() as s:
+            service._event(s, kind, info.username, data)
+
+    def run(op, *args, **kwargs):
+        """Run an API operation in its own transaction; returns (result, error text)."""
+        with sessions() as s:
+            try:
+                result = op(s, *args, **kwargs)
+                s.commit()
+                return result, None
+            except HTTPException as exc:
+                s.rollback()
+                return None, str(exc.detail)
+            except ValueError as exc:
+                s.rollback()
+                return None, str(exc)
+
+    def refreshed(request, info, error):
+        if error:
+            return render("_error.html", request, info, text=error)
+        return Response(status_code=204, headers={**SECURITY_HEADERS, "HX-Refresh": "true"})
+
+    @app.get("/ui/instances", include_in_schema=False)
+    def instances_page(request: Request):
+        info, denied = check(request)
+        if denied:
+            return denied
+        with sessions() as s:
+            return render("instances.html", request, info, instances=instances(s), node_names={n["id"]: n["name"] for n in nodes(s)})
+
+    @app.get("/ui/instances/{instance_id}", include_in_schema=False)
+    def instance_page(instance_id: int, request: Request, offset: int = 0):
+        info, denied = check(request)
+        if denied:
+            return denied
+        offset = max(offset, 0)
+        with sessions() as s:
+            instance = instance_view(s, instance_id)
+            if instance is None:
+                return message(request, info, 404, "Instance not found.")
+            peers, total = peers_page(s, instance_id, PEER_PAGE, offset)
+            node_names = {n["id"]: n["name"] for n in nodes(s)}
+        return render("instance.html", request, info, instance=instance, peers=peers, total=total, offset=offset, page_size=PEER_PAGE,
+                      node_names=node_names, can_operate=webauth.has_role(info.role, "operator"))
+
+    @app.post("/ui/instances/{instance_id}/switch", include_in_schema=False)
+    def instance_switch(instance_id: int, node_id: int, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        if denied:
+            return denied
+        _, error = run(ops.switch, instance_id, node_id)
+        if not error:
+            audit("web.switch", info, {"instance_id": instance_id, "to_node_id": node_id})
+        return refreshed(request, info, error)
+
+    @app.post("/ui/instances/{instance_id}/peers", include_in_schema=False)
+    async def peer_add(instance_id: int, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        if denied:
+            return denied
+        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        name = (form.get("name") or [""])[0].strip()
+        owner = (form.get("owner") or [""])[0].strip() or None
+        if not name:
+            return render("_error.html", request, info, text="Peer name is required.")
+        result, error = run(ops.add_peer, instance_id, name, owner)
+        if not error:
+            audit("web.peer_add", info, {"instance_id": instance_id, "peer_id": result["id"]})
+        return refreshed(request, info, error)
+
+    @app.post("/ui/peers/{peer_id}/enabled", include_in_schema=False)
+    def peer_enabled(peer_id: int, value: bool, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        if denied:
+            return denied
+        _, error = run(ops.set_enabled, peer_id, value)
+        if not error:
+            audit("web.peer_enabled", info, {"peer_id": peer_id, "enabled": value})
+        return refreshed(request, info, error)
+
+    @app.post("/ui/peers/{peer_id}/delete", include_in_schema=False)
+    def peer_delete(peer_id: int, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        if denied:
+            return denied
+        _, error = run(ops.remove_peer, peer_id)
+        if not error:
+            audit("web.peer_delete", info, {"peer_id": peer_id})
+        return refreshed(request, info, error)
+
+    @app.get("/ui/peers/{peer_id}/config", include_in_schema=False)
+    def peer_config(peer_id: int, request: Request):
+        info, denied = check(request, "operator")
+        if denied:
+            return denied
+        text, error = run(ops.config, peer_id, actor=info.username)
+        if error:
+            return message(request, info, 404 if "unknown" in error else 409, error)
+        return Response(text, media_type="text/plain", headers={**SECURITY_HEADERS, "Content-Disposition": f'attachment; filename="peer-{peer_id}.conf"'})

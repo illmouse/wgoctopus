@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Instances - wgoctopus{% endblock %}
+{% block body %}
+<h1>Instances</h1>
+<table>
+  <thead><tr><th>Name</th><th>Address</th><th>Port</th><th>Endpoint</th><th>Active node</th><th>Peers</th></tr></thead>
+  <tbody>
+  {% for i in instances %}
+  <tr>
+    <td><a href="/ui/instances/{{ i.id }}">{{ i.name }}</a></td>
+    <td>{{ i.address }}</td><td>{{ i.listen_port }}</td><td>{{ i.endpoint_host or "-" }}</td>
+    <td>{{ node_names.get(i.active_node_id, "-") if i.active_node_id else "-" }}</td>
+    <td>{{ i.peer_count }}</td>
+  </tr>
+  {% else %}<tr><td colspan="6" class="muted">No instances yet</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

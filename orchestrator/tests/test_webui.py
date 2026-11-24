@@ -8,7 +8,7 @@ from test_api_provision import swap
 from test_api_web_auth import BEARER, PW, build, login
 from test_provision_steps import FakeHost
 
-from wgoctopus_orch import service, webauth
+from wgoctopus_orch import service, webauth, webui
 from wgoctopus_orch.models import Event
 from wgoctopus_orch.provision import Step
 
@@ -247,3 +247,151 @@ def test_protected_node_needs_confirmation_and_jobs_can_be_cancelled(ui):
     assert again.status_code == 200 and "not running" in again.text
     assert client.post("/ui/jobs/999/cancel", headers=headers).status_code == 404
     assert client.post(f"/ui/jobs/{job_id}/cancel").status_code == 403
+
+
+def make_instance(client, name="wg0", endpoint="vpn.example.org", index=0):
+    body = {"name": name, "listen_port": 51820 + index, "address": f"10.0.{index}.1/29"}
+    if endpoint:
+        body["endpoint_host"] = endpoint
+    instance = client.post("/v1/instances", json=body, headers=BEARER).json()
+    node_a, node_b = add_node(client, f"{name}-a"), add_node(client, f"{name}-b")
+    for node, role in ((node_a, "active"), (node_b, "standby")):
+        assert client.put(f"/v1/instances/{instance['id']}/placements/{node['id']}", json={"role": role}, headers=BEARER).status_code == 200
+    return instance, node_a, node_b
+
+
+def add_peer(client, iid, name, owner=None):
+    r = client.post(f"/v1/instances/{iid}/peers", json={"name": name, "owner": owner}, headers=BEARER)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_instances_pages_and_pagination(ui, monkeypatch):
+    client, _ = ui
+    instance, _, _ = make_instance(client)
+    iid = instance["id"]
+    for index in range(3):
+        add_peer(client, iid, f"peer-{index}")
+    assert client.get("/ui/instances").status_code == 303
+    assert client.get(f"/ui/instances/{iid}").status_code == 303
+    login(client, "view")
+    listing = client.get("/ui/instances")
+    assert listing.status_code == 200 and f"/ui/instances/{iid}" in listing.text and "wg0-a" in listing.text
+    detail = client.get(f"/ui/instances/{iid}")
+    assert detail.status_code == 200 and "10.0.0.1/29" in detail.text and instance["public_key"] in detail.text
+    assert "peer-0" in detail.text and "wg0-b" in detail.text and "Peers (3)" in detail.text
+    assert "PrivateKey" not in detail.text and "private_key" not in detail.text
+    assert "hx-post" not in detail.text and "Config" not in detail.text  # viewer: read-only
+    missing = client.get("/ui/instances/999")
+    assert missing.status_code == 404 and "Instance not found" in missing.text
+    monkeypatch.setattr(webui, "PEER_PAGE", 2)
+    first = client.get(f"/ui/instances/{iid}")
+    assert "peer-1" in first.text and "peer-2" not in first.text and "Next" in first.text and "Previous" not in first.text
+    second = client.get(f"/ui/instances/{iid}?offset=2")
+    assert "peer-2" in second.text and "peer-0" not in second.text and "Previous" in second.text and "Next" not in second.text
+    assert "peer-0" in client.get(f"/ui/instances/{iid}?offset=-5").text
+
+
+def test_empty_instances(ui):
+    client, _ = ui
+    login(client)
+    assert "No instances yet" in client.get("/ui/instances").text
+
+
+def test_operator_manages_peers(ui):
+    client, sessions = ui
+    instance, _, _ = make_instance(client)
+    iid = instance["id"]
+    login(client, "ops")
+    headers = csrf_of(client)
+    detail = client.get(f"/ui/instances/{iid}")
+    assert "Add peer" in detail.text and "Make active" in detail.text
+    kicks = len(client.app.state.reconciler.kicks)
+    added = client.post(f"/ui/instances/{iid}/peers", content="name=phone&owner=alice", headers=headers)
+    assert added.status_code == 204 and added.headers["hx-refresh"] == "true"
+    peers = client.get(f"/v1/instances/{iid}/peers", headers=BEARER).json()
+    assert [(p["name"], p["owner"]) for p in peers] == [("phone", "alice")]
+    assert len(client.app.state.reconciler.kicks) > kicks
+    pid = peers[0]["id"]
+    page = client.get(f"/ui/instances/{iid}")
+    assert "phone" in page.text and "Disable" in page.text and f"/ui/peers/{pid}/config" in page.text
+
+    assert "required" in client.post(f"/ui/instances/{iid}/peers", content="name=+&owner=", headers=headers).text
+    assert "reserved" in client.post(f"/ui/instances/{iid}/peers", content=f"name=x&owner={service.PROBE_OWNER}", headers=headers).text
+    assert "unknown instance" in client.post("/ui/instances/999/peers", content="name=x", headers=headers).text
+    for index in range(4):
+        assert client.post(f"/ui/instances/{iid}/peers", content=f"name=p{index}", headers=headers).status_code == 204
+    assert "no free peer address" in client.post(f"/ui/instances/{iid}/peers", content="name=full", headers=headers).text
+
+    off = client.post(f"/ui/peers/{pid}/enabled?value=false", headers=headers)
+    assert off.status_code == 204 and client.get(f"/v1/peers/{pid}", headers=BEARER).json()["enabled"] is False
+    assert "Enable" in client.get(f"/ui/instances/{iid}").text
+    assert client.post(f"/ui/peers/{pid}/enabled?value=true", headers=headers).status_code == 204
+    assert client.get(f"/v1/peers/{pid}", headers=BEARER).json()["enabled"] is True
+    assert "unknown peer" in client.post("/ui/peers/999/enabled?value=true", headers=headers).text
+
+    assert client.post(f"/ui/peers/{pid}/delete", headers=headers).status_code == 204
+    assert client.get(f"/v1/peers/{pid}", headers=BEARER).status_code == 404
+    assert "unknown peer" in client.post(f"/ui/peers/{pid}/delete", headers=headers).text
+
+    with sessions() as s:
+        kinds = [e.kind for e in s.scalars(select(Event).order_by(Event.id))]
+        for kind in ("web.peer_add", "web.peer_enabled", "web.peer_delete"):
+            assert kind in kinds
+        added_event = s.scalars(select(Event).where(Event.kind == "web.peer_add")).first()
+        assert added_event.subject == "ops" and added_event.data["instance_id"] == iid
+
+
+def test_peer_config_download_is_audited(ui):
+    client, sessions = ui
+    instance, *_ = make_instance(client)
+    bare, *_ = make_instance(client, "bare", endpoint=None, index=1)
+    pid = add_peer(client, instance["id"], "phone")["id"]
+    bare_pid = add_peer(client, bare["id"], "tablet")["id"]
+    assert client.get(f"/ui/peers/{pid}/config").status_code == 303
+    login(client, "view")
+    assert client.get(f"/ui/peers/{pid}/config").status_code == 403
+    client.cookies.clear()
+    login(client, "ops")
+    r = client.get(f"/ui/peers/{pid}/config")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain")
+    assert r.headers["content-disposition"] == f'attachment; filename="peer-{pid}.conf"' and r.headers["cache-control"] == "no-store"
+    assert "[Interface]" in r.text and "vpn.example.org" in r.text
+    with sessions() as s:
+        event = s.scalars(select(Event).where(Event.kind == "peer.config_issued")).one()
+        assert event.subject == str(pid) and event.data == {"by": "ops"}
+    no_host = client.get(f"/ui/peers/{bare_pid}/config")
+    assert no_host.status_code == 409 and "endpoint_host is required" in no_host.text
+    assert client.get("/ui/peers/999/config").status_code == 404
+
+
+def test_switch_active_node_from_ui(ui):
+    client, sessions = ui
+    instance, _, node_b = make_instance(client)
+    other = add_node(client, "elsewhere")
+    iid = instance["id"]
+    url = f"/ui/instances/{iid}/switch"
+    assert client.post(f"{url}?node_id={node_b['id']}").status_code == 401
+    login(client, "ops")
+    assert client.post(f"{url}?node_id={node_b['id']}").status_code == 403  # no CSRF
+    headers = csrf_of(client)
+    assert "no placement" in client.post(f"{url}?node_id={other['id']}", headers=headers).text
+    assert "unknown instance" in client.post(f"/ui/instances/999/switch?node_id={node_b['id']}", headers=headers).text
+    moved = client.post(f"{url}?node_id={node_b['id']}", headers=headers)
+    assert moved.status_code == 204 and moved.headers["hx-refresh"] == "true"
+    assert client.get(f"/v1/instances/{iid}", headers=BEARER).json()["active_node_id"] == node_b["id"]
+    with sessions() as s:
+        event = s.scalars(select(Event).where(Event.kind == "web.switch")).one()
+        assert event.data == {"instance_id": iid, "to_node_id": node_b["id"]}
+
+
+def test_viewer_cannot_mutate_peers_or_switch(ui):
+    client, _ = ui
+    instance, _, node_b = make_instance(client)
+    pid = add_peer(client, instance["id"], "phone")["id"]
+    login(client, "view")
+    headers = csrf_of(client)
+    for url in (f"/ui/instances/{instance['id']}/peers", f"/ui/peers/{pid}/enabled?value=false", f"/ui/peers/{pid}/delete",
+                f"/ui/instances/{instance['id']}/switch?node_id={node_b['id']}"):
+        assert client.post(url, headers=headers).status_code == 403
+    assert client.get(f"/v1/peers/{pid}", headers=BEARER).json()["enabled"] is True

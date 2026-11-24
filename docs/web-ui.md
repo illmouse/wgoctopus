@@ -86,7 +86,7 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log: done; 7.4c instances + peers; 7.4d failover + requests + bootstrap); k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log: done; 7.4c instances + peers: done; 7.4d failover + requests + bootstrap); k3s manifests and backups.
 
 ## UI skeleton (7.4a)
 
@@ -116,3 +116,11 @@ Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bo
 - `POST /ui/nodes/{id}/provision` (admin, CSRF): creates the job from the node's stored provision options (the `auto` flag is dropped), starts it in the background, audits `web.provision_start`, and answers `HX-Redirect` to the job page. Business errors (already in progress, confirmation required) come back as an inline message.
 - `GET /ui/jobs/{id}` and `GET /ui/fragments/jobs/{id}` (admin only, logs can contain host details): steps with state and log; the fragment re-polls every 2 s only while the job is `queued` or `running`. `POST /ui/jobs/{id}/cancel` (admin, CSRF) cancels a running job and audits `web.provision_cancel`.
 - Operators and viewers see job states on the node page but cannot open logs or start jobs (403 page / bare 403 for fragments).
+
+## Instances and peers pages (7.4c)
+
+- `GET /ui/instances` and `GET /ui/instances/{id}` (viewer): instance parameters (public key, endpoint, MTU, egress; obfuscation is summarised, the header protection key only as "set"), placements with roles, and a paginated peer table (50 per page, `?offset=`).
+- Operator actions (CSRF, audited with the actor name): `POST /ui/instances/{id}/switch?node_id=` (event `web.switch`), `POST /ui/instances/{id}/peers` (form body `name`, optional `owner`; `web.peer_add`), `POST /ui/peers/{id}/enabled?value=true|false` (`web.peer_enabled`), `POST /ui/peers/{id}/delete` (`web.peer_delete`, browser confirmation). Successful actions answer `HX-Refresh`; failures render inline.
+- `GET /ui/peers/{id}/config` (operator): the explicit client-config download, `text/plain` attachment, `no-store`, recorded as `peer.config_issued` with `{"by": username}`.
+- The handlers call the same functions as `/v1` (`add_peer_op`, `peer_enabled_op`, `peer_remove_op`, `peer_config_op`, `switch_op` in `api.py`), so validation and reconciler kicks are identical.
+- Not in the UI yet: creating or editing instances and placements (use the bootstrap YAML or `/v1`); admin-only, planned later.

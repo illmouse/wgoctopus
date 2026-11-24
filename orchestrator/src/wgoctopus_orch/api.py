@@ -8,6 +8,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import asyncssh
 import httpx
@@ -16,7 +17,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -932,18 +933,21 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if not service.delete_hop_link(s,hop_id,instance_id,cipher): raise HTTPException(404,"unknown hop link")
         kick(s,[hop_id]); return Response(status_code=204)
 
-    @app.post("/v1/instances/{ident}/switch",dependencies=[Depends(auth)])
-    def switch_instance(ident:int,body:SwitchIn,s:Session=Depends(db)):
+    def switch_op(s,ident,node_id):
         if not s.get(Instance,ident): raise HTTPException(404,"unknown instance")
         old=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.role=="active").order_by(Placement.weight.desc(),Placement.node_id))
-        target=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.node_id==body.node_id))
+        target=s.scalar(select(Placement).where(Placement.instance_id==ident,Placement.node_id==node_id))
         if not target: raise HTTPException(409,"node has no placement for instance")
         old_id=old.node_id if old else None
-        service.switch_active(s,ident,body.node_id,cipher)
+        service.switch_active(s,ident,node_id,cipher)
         placements=s.scalars(select(Placement).where(Placement.instance_id==ident)).all()
         hops=s.scalars(select(HopLink.hop_id).where(HopLink.instance_id==ident)).all()
         kick(s,[p.node_id for p in placements]+hops)
-        return dict(instance_id=ident,from_node_id=old_id,to_node_id=body.node_id,changed=old_id!=body.node_id)
+        return dict(instance_id=ident,from_node_id=old_id,to_node_id=node_id,changed=old_id!=node_id)
+
+    @app.post("/v1/instances/{ident}/switch",dependencies=[Depends(auth)])
+    def switch_instance(ident:int,body:SwitchIn,s:Session=Depends(db)):
+        return switch_op(s,ident,body.node_id)
 
     @app.delete("/v1/nodes/{ident}",dependencies=[Depends(auth)],status_code=204)
     def delete_node(ident:int,s:Session=Depends(db)):
@@ -952,17 +956,20 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if s.scalar(select(Placement.id).where(Placement.node_id==ident)): raise HTTPException(409,"node has placements")
         s.delete(n); return Response(status_code=204)
 
-    @app.post("/v1/instances/{ident}/peers",dependencies=[Depends(auth)],status_code=201)
-    def create_peer(ident:int,body:PeerIn,s:Session=Depends(db)):
-        if body.owner == service.PROBE_OWNER:
+    def add_peer_op(s,ident,name,owner):
+        if owner == service.PROBE_OWNER:
             raise HTTPException(422, "owner is reserved")
         try:
-            p=service.add_peer(s,ident,body.name,owner=body.owner,crypto=cipher)
+            p=service.add_peer(s,ident,name,owner=owner,crypto=cipher)
         except ValueError as exc:
             if "no free peer IPs" in str(exc):
                 raise HTTPException(409, "instance subnet has no free peer address") from exc
             raise
         kick(s,placed_nodes(s,ident)); return peer(p)
+
+    @app.post("/v1/instances/{ident}/peers",dependencies=[Depends(auth)],status_code=201)
+    def create_peer(ident:int,body:PeerIn,s:Session=Depends(db)):
+        return add_peer_op(s,ident,body.name,body.owner)
 
     @app.get("/v1/instances/{ident}/peers",dependencies=[Depends(auth)])
     def list_peers(ident:int,owner:str|None=None,enabled:bool|None=None,limit:int=Query(100,ge=1,le=1000),offset:int=Query(0,ge=0),s:Session=Depends(db)):
@@ -990,24 +997,37 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             for n in nodes:service.bump_revision(s,n,cipher)
         kick(s,nodes); return peer(p)
 
-    @app.delete("/v1/peers/{ident}",dependencies=[Depends(auth)],status_code=204)
-    def delete_peer(ident:int,s:Session=Depends(db)):
+    def peer_remove_op(s,ident):
         p=s.get(Peer, ident)
         if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
         nodes=placed_nodes(s,p.instance_id)
         if not service.remove_peer(s,ident,cipher): raise HTTPException(404,"unknown peer")
-        kick(s,nodes); return Response(status_code=204)
+        kick(s,nodes)
 
-    @app.get("/v1/peers/{ident}/config",dependencies=[Depends(auth)])
-    def peer_config(ident:int,endpoint_host:str|None=None,s:Session=Depends(db)):
+    @app.delete("/v1/peers/{ident}",dependencies=[Depends(auth)],status_code=204)
+    def delete_peer(ident:int,s:Session=Depends(db)):
+        peer_remove_op(s,ident); return Response(status_code=204)
+
+    def peer_enabled_op(s,ident,enabled):
+        p=s.get(Peer,ident)
+        if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
+        nodes=placed_nodes(s,p.instance_id)
+        service.set_peer_enabled(s,ident,enabled,cipher)
+        kick(s,nodes); return peer(p)
+
+    def peer_config_op(s,ident,endpoint_host=None,actor=None):
         p=s.get(Peer, ident)
         if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
         instance=s.get(Instance,p.instance_id)
         endpoint_host=instance.endpoint_host or endpoint_host or os.getenv("WGOCTOPUS_CLIENT_ENDPOINT_HOST")
         if not endpoint_host: raise HTTPException(422,"endpoint_host is required")
         text=service.render_client_config(s,ident,endpoint_host,crypto=cipher)
-        s.add(Event(kind="peer.config_issued",subject=str(ident),data={}))
-        return Response(text,media_type="text/plain",headers={"Cache-Control":"no-store"})
+        s.add(Event(kind="peer.config_issued",subject=str(ident),data={"by":actor} if actor else {}))
+        return text
+
+    @app.get("/v1/peers/{ident}/config",dependencies=[Depends(auth)])
+    def peer_config(ident:int,endpoint_host:str|None=None,s:Session=Depends(db)):
+        return Response(peer_config_op(s,ident,endpoint_host),media_type="text/plain",headers={"Cache-Control":"no-store"})
 
     def probe_dict(p):
         result = app.state.reconciler.probe_statuses().get(p.id) if app.state.reconciler and callable(getattr(app.state.reconciler, "probe_statuses", None)) else None
@@ -1094,9 +1114,22 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             n = s.get(Node, ident)
             return node(n, s) if n else None
 
+        def instance_view(s, ident):
+            i = s.get(Instance, ident)
+            return inst(i, s) if i else None
+
+        def peers_page(s, ident, limit, offset):
+            query = select(Peer).where(Peer.instance_id == ident, or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER))
+            total = s.scalar(select(func.count()).select_from(query.subquery()))
+            return [peer(p) for p in s.scalars(query.order_by(Peer.id).offset(offset).limit(limit))], total
+
         webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary,
                     nodes=lambda s: [node(n, s) for n in s.scalars(select(Node).order_by(Node.name))],
-                    node_view=node_view, provision=lambda: app.state.provision)
+                    node_view=node_view, provision=lambda: app.state.provision,
+                    instances=lambda s: [inst(i, s) for i in s.scalars(select(Instance).order_by(Instance.name))],
+                    instance_view=instance_view, peers_page=peers_page,
+                    ops=SimpleNamespace(add_peer=add_peer_op, set_enabled=peer_enabled_op, remove_peer=peer_remove_op,
+                                        config=peer_config_op, switch=switch_op))
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

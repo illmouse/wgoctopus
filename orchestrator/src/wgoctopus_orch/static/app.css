@@ -26,3 +26,6 @@ button.danger { background:var(--bad); }
 dl { display:grid; grid-template-columns:max-content 1fr; gap:.2rem 1.2rem; margin:0; } dt { color:var(--muted); } dd { margin:0; }
 pre { background:#10151f; color:#d7dde8; padding:.6rem; border-radius:4px; overflow:auto; max-height:22rem; white-space:pre-wrap; }
 ol.steps { padding-left:1.2rem; } ol.steps li { margin-bottom:.6rem; }
+form.inline { display:flex; gap:.5rem; margin:.6rem 0; } form.inline input { width:auto; flex:1; max-width:16rem; }
+.pager a { margin-right:1rem; } code { word-break:break-all; }
+td button, td .button { padding:.15rem .6rem; font-size:.85rem; }

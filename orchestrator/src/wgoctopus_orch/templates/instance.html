@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ instance.name }} - wgoctopus{% endblock %}
+{% block body %}
+<p><a href="/ui/instances">&larr; Instances</a></p>
+<h1>{{ instance.name }}</h1>
+<div class="card">
+  <dl>
+    <dt>Address</dt><dd>{{ instance.address }}</dd>
+    <dt>Listen port</dt><dd>{{ instance.listen_port }}</dd>
+    <dt>Public key</dt><dd><code>{{ instance.public_key }}</code></dd>
+    <dt>Endpoint host</dt><dd>{{ instance.endpoint_host or "-" }}</dd>
+    <dt>MTU</dt><dd>{{ instance.mtu }}</dd>
+    <dt>Egress / SNAT</dt><dd>{{ instance.egress_interface or "-" }} / {{ instance.snat_ip or "-" }}</dd>
+    <dt>Client DNS</dt><dd>{{ instance.client_dns or "-" }}</dd>
+    <dt>Obfuscation</dt><dd>{{ instance.obfuscation|length }} parameters{% if instance.obfuscation.header_protection_key_set %}, header protection key set{% endif %}</dd>
+  </dl>
+</div>
+
+<h2>Placements</h2>
+<div id="switch-result"></div>
+<table>
+  <thead><tr><th>Node</th><th>Role</th><th>Weight</th><th></th></tr></thead>
+  <tbody>
+  {% for p in instance.placements %}
+  <tr>
+    <td><a href="/ui/nodes/{{ p.node_id }}">{{ node_names.get(p.node_id, p.node_id) }}</a></td>
+    <td><span class="badge {{ 'ok' if p.role == 'active' else 'muted' }}">{{ p.role }}</span></td>
+    <td>{{ p.weight }}</td>
+    <td>{% if can_operate and p.role != "active" %}<button type="button" hx-post="/ui/instances/{{ instance.id }}/switch?node_id={{ p.node_id }}" hx-target="#switch-result" hx-confirm="Make {{ node_names.get(p.node_id, p.node_id) }} the active node?">Make active</button>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="4" class="muted">No placements</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>Peers ({{ total }})</h2>
+{% if can_operate %}
+<form class="inline" hx-post="/ui/instances/{{ instance.id }}/peers" hx-target="#peer-add-result">
+  <input name="name" placeholder="Peer name" maxlength="64" required>
+  <input name="owner" placeholder="Owner (optional)" maxlength="64">
+  <button type="submit">Add peer</button>
+</form>
+<div id="peer-add-result"></div>
+{% endif %}
+<table>
+  <thead><tr><th>Name</th><th>Owner</th><th>Address</th><th>State</th><th>Created</th><th></th></tr></thead>
+  <tbody id="peer-rows">
+  {% for p in peers %}
+  <tr>
+    <td>{{ p.name }}</td><td>{{ p.owner or "-" }}</td><td>{{ p.allowed_ip }}</td>
+    <td><span class="badge {{ 'ok' if p.enabled else 'muted' }}">{{ "enabled" if p.enabled else "disabled" }}</span></td>
+    <td>{{ p.created_at|ts }}</td>
+    <td>
+      {% if can_operate %}
+      <button type="button" hx-post="/ui/peers/{{ p.id }}/enabled?value={{ 'false' if p.enabled else 'true' }}" hx-target="#peer-add-result">{{ "Disable" if p.enabled else "Enable" }}</button>
+      <a class="button" href="/ui/peers/{{ p.id }}/config" download>Config</a>
+      <button type="button" class="danger" hx-post="/ui/peers/{{ p.id }}/delete" hx-target="#peer-add-result" hx-confirm="Delete peer {{ p.name }}? This cannot be undone.">Delete</button>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}<tr><td colspan="6" class="muted">No peers</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="pager">
+  {% if offset > 0 %}<a href="?offset={{ [offset - page_size, 0]|max }}">&larr; Previous</a>{% endif %}
+  {% if offset + page_size < total %}<a href="?offset={{ offset + page_size }}">Next &rarr;</a>{% endif %}
+</p>
+{% endblock %}
