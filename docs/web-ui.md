@@ -86,7 +86,11 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages; k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log; 7.4c instances + peers; 7.4d failover + requests + bootstrap); k3s manifests and backups.
+
+## UI skeleton (7.4a)
+
+`webui.py` mounts the pages when `WGOCTOPUS_WEB_ENABLED` is true (otherwise `/`, `/login`, `/ui/` and `/static` are 404). Templates and static files live inside the package (`templates/`, `static/`, shipped as package data); `htmx.min.js` 2.0.4 is vendored, there is no CDN or build chain. Routes: `GET /` (redirect), `GET /login` (local form, SSO button when OIDC is enabled), `GET /ui/` (dashboard: instances, peers, nodes by state, recent events), `GET /ui/fragments/status` (HTMX refresh every 10 s, 401 without a session). Pages read the session cookie only; the bearer token does not open them and the session cookie does not open `/v1`. Every page response carries a strict CSP (`default-src 'self'`, no inline script), `X-Frame-Options: DENY`, `nosniff` and `no-store`; HTMX requests get `X-CSRF-Token` from a `<meta>` tag via `htmx:configRequest`. Jinja2 autoescape is on.
 
 
 ## OIDC login

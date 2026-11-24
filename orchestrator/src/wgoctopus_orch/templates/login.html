@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sign in - wgoctopus{% endblock %}
+{% block body %}
+<section class="card narrow">
+  <h1>Sign in</h1>
+  <form id="login-form" autocomplete="on">
+    <label>Username <input name="username" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button>
+    <p id="login-error" class="error" role="alert" hidden></p>
+  </form>
+  {% if oidc %}<p class="sep"><a class="button" href="/auth/oidc/login">Sign in with SSO</a></p>{% endif %}
+</section>
+{% endblock %}

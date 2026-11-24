@@ -20,7 +20,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import bootstrap, service, webauth
+from . import bootstrap, service, webauth, webui
 from . import oidc as oidc_mod
 from . import service_users as users
 from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
@@ -1080,11 +1080,17 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/v1/status",dependencies=[Depends(auth)])
     def status(s:Session=Depends(db)):
+        return status_summary(s)
+
+    def status_summary(s):
         states={k:0 for k in ["IN_SYNC","SYNCING","UNREACHABLE","BLOCKED_DANGEROUS","BLOCKED_REVISION_AHEAD","BLOCKED_INVALID","BLOCKED_AUTH","DISABLED","UNKNOWN"]}
         statuses=app.state.reconciler.status().values() if app.state.reconciler else []
         for st in statuses: states[st.state.value]+=1
         return {"nodes_by_state":states,"nodes_unhealthy":s.scalar(select(__import__("sqlalchemy").func.count(NodeObserved.node_id)).where(NodeObserved.healthy.is_(False))),
                 "instances":s.scalar(select(__import__("sqlalchemy").func.count(Instance.id))),"peers":s.scalar(select(__import__("sqlalchemy").func.count(Peer.id)).where(or_(Peer.owner.is_(None), Peer.owner != service.PROBE_OWNER)))}
+
+    if alert_settings.web_enabled:
+        webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary)
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

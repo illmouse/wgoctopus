@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "wgoctopus-orch"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["sqlalchemy>=2", "alembic", "cryptography", "jsonschema", "asyncssh", "httpx", "fastapi", "uvicorn", "pyyaml", "pyjwt"]
+dependencies = ["sqlalchemy>=2", "alembic", "cryptography", "jsonschema", "asyncssh", "httpx", "fastapi", "uvicorn", "pyyaml", "pyjwt", "jinja2"]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pytest-asyncio", "ruff"]
@@ -16,6 +16,9 @@ wgoctopus-orch = "wgoctopus_orch.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+wgoctopus_orch = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
