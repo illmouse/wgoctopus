@@ -63,3 +63,16 @@ Client mode configures an interface as a synthetic probe peer. It adds no
 firewall rules; `listen_port: 0` lets the daemon choose a random port. Peer
 endpoints must use an IP literal (not a hostname). Use this mode for a
 synthetic probe orchestrated from the orchestrator.
+# Pull mode (reverse tunnel)
+
+Set `--pull-server host:port` (or `WGOCTOPUS_PULL_SERVER`) to enable pull mode.
+It also requires `--pull-user` / `WGOCTOPUS_PULL_USER`, `--pull-key-file` /
+`WGOCTOPUS_PULL_KEY_FILE`, and `--pull-host-key` / `WGOCTOPUS_PULL_HOST_KEY`
+(the `SHA256:...` fingerprint). For example, use `example.org:22` as the
+server address. Pull mode makes an outbound SSH connection and reverse-forwards
+the agent API; it does not change the API contract.
+
+Security: the host key must be explicitly pinned (there is no TOFU), and the
+private key file must be mode 0600 or stricter. The orchestrator side must
+authorize this node by its SSH public key. The tunnel forwards only to the
+agent API, which still requires its bearer token.

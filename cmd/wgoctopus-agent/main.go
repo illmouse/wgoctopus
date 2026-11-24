@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/illmouse/wgoctopus/internal/keeper"
 	"github.com/illmouse/wgoctopus/internal/manager"
 	"github.com/illmouse/wgoctopus/internal/netsetup"
+	"github.com/illmouse/wgoctopus/internal/pull"
 	"github.com/illmouse/wgoctopus/internal/store"
 	"github.com/illmouse/wgoctopus/internal/uapi"
 )
@@ -41,6 +43,7 @@ type config struct {
 	ApplyTimeout                                              time.Duration
 	KeeperInterval                                            time.Duration
 	KeeperDisable                                             bool
+	PullServer, PullUser, PullKeyFile, PullHostKey            string
 }
 
 func parseConfig(args []string, getenv func(string) string) (config, error) {
@@ -55,6 +58,10 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 	fs.StringVar(&c.SockDir, "sock-dir", "/var/run/amneziawg", "AWG UAPI socket directory")
 	fs.StringVar(&c.IPTablesBin, "iptables-bin", "iptables", "iptables executable")
 	fs.BoolVar(&c.HopEnabled, "hop-enabled", strings.EqualFold(getenv("WGOCTOPUS_HOP_ENABLED"), "true"), "enable hop forwarding mode")
+	fs.StringVar(&c.PullServer, "pull-server", getenv("WGOCTOPUS_PULL_SERVER"), "SSH reverse tunnel server")
+	fs.StringVar(&c.PullUser, "pull-user", getenv("WGOCTOPUS_PULL_USER"), "SSH user")
+	fs.StringVar(&c.PullKeyFile, "pull-key-file", getenv("WGOCTOPUS_PULL_KEY_FILE"), "SSH private key file")
+	fs.StringVar(&c.PullHostKey, "pull-host-key", getenv("WGOCTOPUS_PULL_HOST_KEY"), "pinned SSH host fingerprint")
 	fs.BoolVar(&c.MetricsPublic, "metrics-public", false, "allow unauthenticated metrics")
 	fs.BoolVar(&c.AllowPublicListen, "allow-public-listen", false, "allow listening on all interfaces")
 	fs.StringVar(&c.LogLevel, "log-level", "info", "debug, info, warn, or error")
@@ -66,6 +73,16 @@ func parseConfig(args []string, getenv func(string) string) (config, error) {
 		return c, err
 	}
 	c.Listen = *listen
+	if c.PullServer != "" && (c.PullUser == "" || c.PullKeyFile == "" || c.PullHostKey == "") {
+		return config{}, fmt.Errorf("pull mode requires pull-user, pull-key-file, and pull-host-key")
+	}
+	if c.PullHostKey != "" {
+		fingerprint := strings.TrimPrefix(c.PullHostKey, "SHA256:")
+		decoded, err := base64.RawStdEncoding.DecodeString(fingerprint)
+		if !strings.HasPrefix(c.PullHostKey, "SHA256:") || len(fingerprint) != 43 || err != nil || len(decoded) != 32 {
+			return config{}, errors.New("pull-host-key must be a SHA256 fingerprint")
+		}
+	}
 	if c.ShowVersion {
 		return c, nil
 	}
@@ -149,6 +166,12 @@ func run(ctx context.Context, cfg config) error {
 		go k.Run(ctx)
 	}
 	collector.Version = version
+	var pullRunner *pull.Runner
+	if cfg.PullServer != "" {
+		pullRunner = &pull.Runner{Config: pull.Config{Server: cfg.PullServer, User: cfg.PullUser, KeyFile: cfg.PullKeyFile, HostKeyFingerprint: cfg.PullHostKey, Target: cfg.Listen, Logger: slog.Default()}}
+		go pullRunner.Run(ctx)
+		collector.PullStats = func() pull.Stats { return pullRunner.Stats() }
+	}
 	if cfg.HopEnabled {
 		collector.HopStats = mgr.HopStats
 	}

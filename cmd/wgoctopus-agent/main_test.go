@@ -91,6 +91,63 @@ func TestParseConfig(t *testing.T) {
 	})
 }
 
+func TestParseConfigPull(t *testing.T) {
+	base := []string{"--listen", "127.0.0.1:80", "--token", "x"}
+	getenv := func(string) string { return "" }
+	c, err := parseConfig(base, getenv)
+	if err != nil || c.PullServer != "" {
+		t.Fatalf("pull should be disabled by default: config=%+v err=%v", c, err)
+	}
+
+	server, user, keyFile := "pull.example:22", "pull-user-secret", "/secret/key-path"
+	c, err = parseConfig(append(base, "--pull-server", server, "--pull-user", user, "--pull-key-file", keyFile), getenv)
+	if err == nil || strings.Contains(err.Error(), server) || strings.Contains(err.Error(), user) || strings.Contains(err.Error(), keyFile) {
+		t.Fatalf("missing pull settings should fail without echoing values: config=%+v err=%v", c, err)
+	}
+
+	fingerprint := "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	args := append(append([]string{}, base...), "--pull-server", server, "--pull-user", user, "--pull-key-file", keyFile, "--pull-host-key", fingerprint)
+	c, err = parseConfig(args, getenv)
+	if err != nil || c.PullServer != server || c.PullUser != user || c.PullKeyFile != keyFile || c.PullHostKey != fingerprint {
+		t.Fatalf("pull flags: config=%+v err=%v", c, err)
+	}
+
+	env := map[string]string{
+		"WGOCTOPUS_PULL_SERVER":   server,
+		"WGOCTOPUS_PULL_USER":     user,
+		"WGOCTOPUS_PULL_KEY_FILE": keyFile,
+		"WGOCTOPUS_PULL_HOST_KEY": fingerprint,
+	}
+	c, err = parseConfig(base, func(k string) string { return env[k] })
+	if err != nil || c.PullServer != server || c.PullUser != user || c.PullKeyFile != keyFile || c.PullHostKey != fingerprint {
+		t.Fatalf("pull environment: config=%+v err=%v", c, err)
+	}
+}
+
+func TestParseConfigPullHostKeyFingerprint(t *testing.T) {
+	base := []string{"--listen", "127.0.0.1:80", "--token", "x", "--pull-server", "server", "--pull-user", "user", "--pull-key-file", "key"}
+	for _, tc := range []struct {
+		fingerprint string
+		valid       bool
+	}{
+		{"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", true},
+		{"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", false},
+		{"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", false},
+		{"SHA256:!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", false},
+	} {
+		t.Run(tc.fingerprint, func(t *testing.T) {
+			args := append(append([]string{}, base...), "--pull-host-key", tc.fingerprint)
+			_, err := parseConfig(args, func(string) string { return "" })
+			if tc.valid && err != nil {
+				t.Fatal(err)
+			}
+			if !tc.valid && (err == nil || !strings.Contains(err.Error(), "pull-host-key must be a SHA256 fingerprint") || strings.Contains(err.Error(), tc.fingerprint)) {
+				t.Fatalf("invalid fingerprint error = %v", err)
+			}
+		})
+	}
+}
+
 func TestSecretRedaction(t *testing.T) {
 	const token, private, psk = "token-secret", "private-secret", "psk-secret"
 	v := state.State{Interfaces: []state.Interface{{PrivateKey: private, Peers: []state.Peer{{PresharedKey: psk}}}}}

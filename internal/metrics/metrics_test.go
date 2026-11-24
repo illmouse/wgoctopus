@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/illmouse/wgoctopus/internal/hop"
+	"github.com/illmouse/wgoctopus/internal/pull"
 	"github.com/illmouse/wgoctopus/internal/uapi"
 )
 
@@ -93,5 +94,27 @@ func TestHopMetricsOnlyWhenEnabled(t *testing.T) {
 		if !strings.Contains(out, metric) {
 			t.Errorf("missing %q", metric)
 		}
+	}
+}
+
+func TestPullMetricsOnlyWhenEnabled(t *testing.T) {
+	c := &Collector{}
+	if out := string(c.Render(context.Background())); strings.Contains(out, "wgoctopus_pull_") {
+		t.Fatalf("disabled pull metrics: %s", out)
+	}
+	c.PullStats = func() pull.Stats { return pull.Stats{Connected: true, Attempts: 7, LastConnected: 123} }
+	out := string(c.Render(context.Background()))
+	for _, expected := range []string{
+		"# HELP wgoctopus_pull_connected", "# TYPE wgoctopus_pull_connected gauge", "wgoctopus_pull_connected 1\n",
+		"# HELP wgoctopus_pull_connect_attempts_total", "# TYPE wgoctopus_pull_connect_attempts_total counter", "wgoctopus_pull_connect_attempts_total 7\n",
+		"# HELP wgoctopus_pull_last_connected_timestamp_seconds", "# TYPE wgoctopus_pull_last_connected_timestamp_seconds gauge", "wgoctopus_pull_last_connected_timestamp_seconds 123\n",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("missing %q", expected)
+		}
+	}
+	c.PullStats = func() pull.Stats { return pull.Stats{Attempts: 2} }
+	if out := string(c.Render(context.Background())); !strings.Contains(out, "wgoctopus_pull_connected 0\n") {
+		t.Errorf("disconnected metric missing: %s", out)
 	}
 }

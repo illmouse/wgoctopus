@@ -88,3 +88,9 @@ The alert dispatcher reads persisted events and delivers plain-text Telegram not
 
 The orchestrator can attach Confirm/Reject inline buttons to failover proposals. A long-polling `getUpdates` client accepts callbacks only from configured Telegram user IDs and only in the configured chat. Updates are persisted in `alert_state` to avoid replay after restart. This is outbound-only; configure no Telegram webhook, and run only one orchestrator instance per bot token because Telegram does not support concurrent pollers reliably. Callback decisions use the same failover engine as the API.
 # AWG 3.x adds optional header protection, content padding, rekey/reject/keepalive timing, handshake attempts, random trailers, and cookie disabling. Header protection, random trailers, cookie disabling, and content padding changes require `allow_dangerous`; timing changes do not.
+# Pull connectivity
+
+Agents may optionally establish an outbound, host-key-pinned SSH connection
+and reverse-forward their API to the orchestrator. This is a fallback to the
+usual orchestrator-initiated tunnel; API authentication and bearer-token
+requirements remain unchanged.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/illmouse/wgoctopus/internal/hop"
+	"github.com/illmouse/wgoctopus/internal/pull"
 	"github.com/illmouse/wgoctopus/internal/uapi"
 )
 
@@ -23,6 +24,7 @@ type Collector struct {
 	GoVersion       string
 	HopStats        func() hop.Stats
 	KeeperKicks     func() uint64
+	PullStats       func() pull.Stats
 }
 
 // Render returns metrics in Prometheus text exposition format 0.0.4.
@@ -50,6 +52,17 @@ func (c *Collector) Render(ctx context.Context) []byte {
 		metricHeader(&b, "wgoctopus_hop_conntrack_flushed_total", "counter", "Conntrack entries flushed by hop reconciliation.")
 		metricHeader(&b, "wgoctopus_hop_conntrack_flush_errors_total", "counter", "Conntrack flush errors during hop reconciliation.")
 		metricHeader(&b, "wgoctopus_hop_apply_errors_total", "counter", "Hop reconciliation errors.")
+	}
+	if c.PullStats != nil {
+		metricHeader(&b, "wgoctopus_pull_connected", "gauge", "Whether the reverse SSH tunnel is connected.")
+		metricHeader(&b, "wgoctopus_pull_connect_attempts_total", "counter", "Reverse SSH tunnel connection attempts.")
+		metricHeader(&b, "wgoctopus_pull_last_connected_timestamp_seconds", "gauge", "Unix timestamp of the last tunnel connection.")
+		s := c.PullStats()
+		connected := 0
+		if s.Connected {
+			connected = 1
+		}
+		fmt.Fprintf(&b, "wgoctopus_pull_connected %d\nwgoctopus_pull_connect_attempts_total %d\nwgoctopus_pull_last_connected_timestamp_seconds %d\n", connected, s.Attempts, s.LastConnected)
 	}
 
 	if c.AppliedRevision != nil {
