@@ -8,6 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import asyncssh
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -37,6 +38,7 @@ from .models import (
     Placement,
     Probe,
 )
+from .pull_server import PullServer
 from .reconciler import build_reconciler
 from .renderer import active_placement, probe_iface_name
 
@@ -93,10 +95,11 @@ class PlacementIn(Strict):
 
 class NodeIn(Strict):
     name: str
-    ssh_host: str
+    ssh_host: str | None = None
     ssh_port: int = Field(default=22, ge=1, le=65535)
-    ssh_user: str
-    mgmt_mode: str = Field(default="push", pattern="^(push|pull)$")
+    ssh_user: str | None = None
+    mgmt_mode: str = Field(default="push", pattern="^(push|pull|auto)$")
+    pull_public_key: str | None = None
     agent_port: int = Field(default=18080, ge=1, le=65535)
     agent_token: str | None = None
     egress_interface: str | None = None
@@ -116,11 +119,21 @@ class NodeIn(Strict):
 
     @model_validator(mode="after")
     def valid_kind_fields(self):
+        if self.mgmt_mode == "pull":
+            self.ssh_host = self.ssh_host or "-"
+            self.ssh_user = self.ssh_user or "pull"
+        elif not self.ssh_host or not self.ssh_user:
+            raise ValueError("ssh_host and ssh_user are required unless mgmt_mode is pull")
         if self.kind == "hop" and (not self.wan_interface or not self.hop_ip):
             raise ValueError("hop nodes require wan_interface and hop_ip")
         if self.kind == "awg" and (self.wan_interface is not None or self.hop_ip is not None):
             raise ValueError("awg nodes cannot set wan_interface or hop_ip")
         return self
+
+    @field_validator("pull_public_key")
+    @classmethod
+    def public_key(cls, value):
+        return _normalize_pull_key(value)
 
 
 class PeerIn(Strict):
@@ -139,7 +152,8 @@ class NodePatch(Strict):
     ssh_host: str | None = None
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     ssh_user: str | None = None
-    mgmt_mode: str | None = Field(default=None, pattern="^(push|pull)$")
+    mgmt_mode: str | None = Field(default=None, pattern="^(push|pull|auto)$")
+    pull_public_key: str | None = None
     agent_port: int | None = Field(default=None, ge=1, le=65535)
     agent_token: str | None = None
     egress_interface: str | None = None
@@ -157,6 +171,24 @@ class NodePatch(Strict):
             raise ValueError("must be an IPv4 address")
         return value
 
+    @field_validator("pull_public_key")
+    @classmethod
+    def public_key(cls, value):
+        return _normalize_pull_key(value)
+
+
+def _normalize_pull_key(value):
+    if value is None:
+        return None
+    try:
+        if not value.startswith(("ssh-", "ecdsa-", "sk-")) or "\n" in value or "\r" in value:
+            raise ValueError
+        key = asyncssh.import_public_key(value)
+        normalized = key.export_public_key("openssh").decode().split()
+        return " ".join(normalized[:2])
+    except (ValueError, asyncssh.Error, TypeError):
+        raise ValueError("invalid OpenSSH public key") from None
+
 
 class SwitchIn(Strict):
     node_id: int
@@ -168,83 +200,105 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None, pull_server=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
     enabled = os.getenv("WGOCTOPUS_RECONCILER_ENABLED", "true").lower() == "true"
     alert_settings = Settings.from_env()
 
+    def pull_event(kind, node_id):
+        try:
+            with sessions() as session:
+                service._event(session, kind, str(node_id), {})
+                session.commit()
+            if kind == "node.pull_connected" and app.state.reconciler:
+                app.state.reconciler.kick(node_id, force=True)
+        except Exception as exc:
+            log.error("Pull callback failed (%s)", type(exc).__name__)
+
     @asynccontextmanager
     async def lifespan(app):
-        if migrate if migrate is not None else os.getenv("WGOCTOPUS_AUTO_MIGRATE", "true").lower() == "true":
-            try:
-                upgrade_to_head()
-            except Exception:
-                log.exception("Database migration failed")
-                raise
-        if reconciler is None and enabled:
-            app.state.reconciler = build_reconciler(__import__("wgoctopus_orch.config", fromlist=["Settings"]).Settings.from_env(), sessions)
-        else:
-            app.state.reconciler = reconciler
-        if alerts is not None:
-            app.state.alerts = alerts
-        elif alert_settings.alerts_enabled:
-            app.state.alerts = AlertDispatcher(sessions, notifier or TelegramNotifier(
-                alert_settings.telegram_token, alert_settings.telegram_chat_id,
-                api_base=alert_settings.telegram_api_base), delay_seconds=alert_settings.alert_delay_seconds,
-                max_per_minute=alert_settings.alert_max_per_minute, poll_seconds=alert_settings.alert_poll_seconds,
-                kinds=alert_settings.alert_kinds, buttons_enabled=alert_settings.telegram_buttons_enabled)
-        else:
-            app.state.alerts = None
-        stop = __import__("asyncio").Event()
-        task = __import__("asyncio").create_task(app.state.reconciler.run(stop)) if app.state.reconciler else None
-        alert_task = __import__("asyncio").create_task(app.state.alerts.run(stop)) if app.state.alerts else None
-        app.state.failover = failover
-        if app.state.failover is None and alert_settings.failover_mode != "off" and app.state.reconciler:
-            app.state.failover = build_failover(sessions, app.state.reconciler, alert_settings,
-                on_executed=lambda instance_id, node_id: kick_for_failover(instance_id, node_id))
-        async def failover_loop():
-            while not stop.is_set():
+        owned_pull_server = None
+        try:
+            if migrate if migrate is not None else os.getenv("WGOCTOPUS_AUTO_MIGRATE", "true").lower() == "true":
                 try:
-                    await asyncio.to_thread(app.state.failover.evaluate_once)
-                except Exception as exc:
-                    log.error("Failover evaluation failed (%s)", type(exc).__name__)
+                    upgrade_to_head()
+                except Exception:
+                    log.exception("Database migration failed")
+                    raise
+            if pull_server is not None:
+                app.state.pull_server = pull_server
+            elif alert_settings.pull_listen:
+                owned_pull_server = PullServer(sessions, settings=alert_settings,
+                    on_connect=lambda node_id: asyncio.create_task(asyncio.to_thread(pull_event, "node.pull_connected", node_id)),
+                    on_disconnect=lambda node_id: asyncio.create_task(asyncio.to_thread(pull_event, "node.pull_disconnected", node_id)))
+                app.state.pull_server = owned_pull_server
+                await owned_pull_server.start()
+            else:
+                app.state.pull_server = None
+            app.state.reconciler = (build_reconciler(alert_settings, sessions, pull_server=app.state.pull_server)
+                                    if reconciler is None and enabled else reconciler)
+            if alerts is not None:
+                app.state.alerts = alerts
+            elif alert_settings.alerts_enabled:
+                app.state.alerts = AlertDispatcher(sessions, notifier or TelegramNotifier(
+                    alert_settings.telegram_token, alert_settings.telegram_chat_id,
+                    api_base=alert_settings.telegram_api_base), delay_seconds=alert_settings.alert_delay_seconds,
+                    max_per_minute=alert_settings.alert_max_per_minute, poll_seconds=alert_settings.alert_poll_seconds,
+                    kinds=alert_settings.alert_kinds, buttons_enabled=alert_settings.telegram_buttons_enabled)
+            else:
+                app.state.alerts = None
+            stop = asyncio.Event()
+            task = asyncio.create_task(app.state.reconciler.run(stop)) if app.state.reconciler else None
+            alert_task = asyncio.create_task(app.state.alerts.run(stop)) if app.state.alerts else None
+            app.state.failover = failover
+            if app.state.failover is None and alert_settings.failover_mode != "off" and app.state.reconciler:
+                app.state.failover = build_failover(sessions, app.state.reconciler, alert_settings,
+                    on_executed=lambda instance_id, node_id: kick_for_failover(instance_id, node_id))
+            async def failover_loop():
+                while not stop.is_set():
+                    try:
+                        await asyncio.to_thread(app.state.failover.evaluate_once)
+                    except Exception as exc:
+                        log.error("Failover evaluation failed (%s)", type(exc).__name__)
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=alert_settings.failover_eval_interval)
+                    except TimeoutError:
+                        pass
+            failover_task = asyncio.create_task(failover_loop()) if app.state.failover else None
+            if bot is not None:
+                app.state.telegram_bot = bot
+            elif alert_settings.telegram_buttons_enabled and app.state.failover:
+                from .telegram_bot import TelegramBot
+                app.state.telegram_bot = TelegramBot(alert_settings.telegram_token, alert_settings.telegram_chat_id,
+                    alert_settings.telegram_api_base, httpx.AsyncClient(timeout=alert_settings.telegram_poll_timeout + 5),
+                    app.state.failover, sessions, alert_settings.telegram_allowed_user_ids, alert_settings.telegram_poll_timeout)
+            else:
+                app.state.telegram_bot = None
+            bot_task = asyncio.create_task(app.state.telegram_bot.run()) if app.state.telegram_bot else None
+            yield
+        finally:
+            if 'stop' in locals():
+                stop.set()
+            if 'bot_task' in locals() and bot_task:
+                bot_task.cancel()
                 try:
-                    await asyncio.wait_for(stop.wait(), timeout=alert_settings.failover_eval_interval)
-                except TimeoutError:
+                    await bot_task
+                except asyncio.CancelledError:
                     pass
-        failover_task = asyncio.create_task(failover_loop()) if app.state.failover else None
-        if bot is not None:
-            app.state.telegram_bot = bot
-        elif alert_settings.telegram_buttons_enabled and app.state.failover:
-            from .telegram_bot import TelegramBot
-            app.state.telegram_bot = TelegramBot(alert_settings.telegram_token, alert_settings.telegram_chat_id,
-                alert_settings.telegram_api_base, httpx.AsyncClient(timeout=alert_settings.telegram_poll_timeout + 5),
-                app.state.failover, sessions, alert_settings.telegram_allowed_user_ids, alert_settings.telegram_poll_timeout)
-        else:
-            app.state.telegram_bot = None
-        bot_task = asyncio.create_task(app.state.telegram_bot.run()) if app.state.telegram_bot else None
-        yield
-        if bot_task:
-            bot_task.cancel()
-            try:
-                await bot_task
-            except asyncio.CancelledError:
-                pass
-            await app.state.telegram_bot.client.aclose()
-        if failover_task:
-            stop.set()
-            await failover_task
-        if task:
-            stop.set()
-            app.state.reconciler._kick.set()
-            await task
-        if alert_task:
-            stop.set()
-            await alert_task
-        if engine:
-            engine.dispose()
+                await app.state.telegram_bot.client.aclose()
+            if 'failover_task' in locals() and failover_task:
+                await failover_task
+            if 'task' in locals() and task:
+                app.state.reconciler._kick.set()
+                await task
+            if 'alert_task' in locals() and alert_task:
+                await alert_task
+            if owned_pull_server:
+                await owned_pull_server.stop()
+            if engine:
+                engine.dispose()
 
     docs = os.getenv("WGOCTOPUS_API_DOCS", "false").lower() == "true"
     app = FastAPI(lifespan=lifespan, openapi_url="/openapi.json" if docs else None,
@@ -254,6 +308,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     app.state.reconciler = reconciler
     app.state.alerts = alerts
     app.state.telegram_bot = bot
+    app.state.pull_server = pull_server
     token = _token()
     allow_no_auth = os.getenv("WGOCTOPUS_API_ALLOW_NO_AUTH", "false").lower() == "true"
     if not token and not allow_no_auth:
@@ -279,12 +334,20 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/metrics", response_class=Response)
     def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):
-        return Response(render_metrics(s, app.state.reconciler, alerts=app.state.alerts, bot=app.state.telegram_bot), media_type="text/plain; version=0.0.4; charset=utf-8")
+        return Response(render_metrics(s, app.state.reconciler, alerts=app.state.alerts, bot=app.state.telegram_bot, pull_server=app.state.pull_server), media_type="text/plain; version=0.0.4; charset=utf-8")
 
     @app.get("/v1/alerts", dependencies=[Depends(auth)])
     def alerts_status():
         dispatcher = app.state.alerts
         return {"enabled": dispatcher is not None, "buttons_enabled": alert_settings.telegram_buttons_enabled, "counters": dispatcher.counters() if dispatcher else {"sent": 0, "failed": 0, "dropped": 0, "pending": 0}}
+
+    @app.get("/v1/pull", dependencies=[Depends(auth)])
+    def pull_status():
+        server = app.state.pull_server
+        return {"enabled": bool(server), "listen": alert_settings.pull_listen or None if server else None,
+                "host_key_fingerprint": server.host_key_fingerprint if server else None,
+                "connected_node_ids": server.connected_node_ids() if server else [],
+                "counters": server.counters if server else {"connections_ok": 0, "connections_denied": 0}}
 
     @app.post("/v1/alerts/test", status_code=202, dependencies=[Depends(auth)])
     async def alert_test():
@@ -361,6 +424,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         status=(app.state.reconciler.status().get(n.id) if app.state.reconciler else None)
         return dict(id=n.id,name=n.name,ssh_host=n.ssh_host,ssh_port=n.ssh_port,ssh_user=n.ssh_user,
                     mgmt_mode=n.mgmt_mode,agent_port=n.agent_port,egress_interface=n.egress_interface,snat_ip=n.snat_ip,
+                    pull_public_key=n.pull_public_key, pull_connected=bool(app.state.pull_server and app.state.pull_server.is_connected(n.id)),
                     enabled=n.enabled,kind=n.kind,wan_interface=n.wan_interface,hop_ip=n.hop_ip,backend_ip=n.backend_ip,
                     desired_revision=rev.desired_revision if rev else None,
                     observed=dict(last_seen_at=obs.last_seen_at,applied_revision=obs.applied_revision,healthy=obs.healthy,last_error=obs.last_error) if obs else None,
@@ -386,7 +450,11 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(_: Request, exc: RequestValidationError):
-        return JSONResponse(status_code=422, content={"error":"validation_error","detail":jsonable_encoder(exc.errors())})
+        errors = exc.errors()
+        for error in errors:
+            if "pull_public_key" in error.get("loc", ()):
+                error.pop("input", None)
+        return JSONResponse(status_code=422, content={"error":"validation_error","detail":jsonable_encoder(errors)})
 
     @app.exception_handler(IntegrityError)
     async def integrity_error(_, exc):
@@ -471,7 +539,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.post("/v1/nodes",dependencies=[Depends(auth)],status_code=201)
     def create_node(body:NodeIn,s:Session=Depends(db)):
-        n=service.create_node(s,body.name,body.ssh_host,body.ssh_user,ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,crypto=cipher)
+        n=service.create_node(s,body.name,body.ssh_host or "-",body.ssh_user or "pull",ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,pull_public_key=body.pull_public_key,crypto=cipher)
         return node(n,s)
 
     @app.get("/v1/nodes",dependencies=[Depends(auth)])
@@ -489,6 +557,12 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if not n: raise HTTPException(404,"unknown node")
         body=body.model_dump(exclude_unset=True)
         proposed = {"kind": n.kind, "wan_interface": n.wan_interface, "hop_ip": n.hop_ip, **body}
+        mode = body.get("mgmt_mode", n.mgmt_mode)
+        if mode != "pull" and (not body.get("ssh_host", n.ssh_host) or not body.get("ssh_user", n.ssh_user)):
+            raise HTTPException(422, "ssh_host and ssh_user are required unless mgmt_mode is pull")
+        if mode == "pull" and n.mgmt_mode != "pull":
+            if "ssh_host" not in body: n.ssh_host = "-"
+            if "ssh_user" not in body: n.ssh_user = "pull"
         if proposed["kind"] == "hop" and (not proposed["wan_interface"] or not proposed["hop_ip"]):
             raise HTTPException(422, "hop nodes require wan_interface and hop_ip")
         if proposed["kind"] == "awg" and (proposed["wan_interface"] is not None or proposed["hop_ip"] is not None):

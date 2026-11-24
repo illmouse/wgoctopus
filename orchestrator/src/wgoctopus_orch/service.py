@@ -142,14 +142,15 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
 
 def create_node(session: Session, name, ssh_host, ssh_user, *, ssh_port=22, mgmt_mode="push",
                 agent_port=18080, agent_token=None, egress_interface=None, snat_ip=None,
-                enabled=True, kind="awg", wan_interface=None, hop_ip=None, backend_ip=None, crypto=None):
-    if mgmt_mode not in {"push", "pull"}:
-        raise ValueError("mgmt_mode must be 'push' or 'pull'")
+                enabled=True, kind="awg", wan_interface=None, hop_ip=None, backend_ip=None, pull_public_key=None, crypto=None):
+    if mgmt_mode not in {"push", "pull", "auto"}:
+        raise ValueError("mgmt_mode must be 'push', 'pull', or 'auto'")
     node = Node(name=name, ssh_host=ssh_host, ssh_port=ssh_port, ssh_user=ssh_user,
                 mgmt_mode=mgmt_mode, agent_port=agent_port,
                 agent_token_enc=_crypto(crypto).encrypt(agent_token or secrets.token_urlsafe(32)),
                 egress_interface=egress_interface, snat_ip=snat_ip, enabled=enabled,
-                kind=kind, wan_interface=wan_interface, hop_ip=hop_ip, backend_ip=backend_ip)
+                kind=kind, wan_interface=wan_interface, hop_ip=hop_ip, backend_ip=backend_ip,
+                pull_public_key=pull_public_key)
     with _transaction(session):
         session.add(node)
         session.flush()

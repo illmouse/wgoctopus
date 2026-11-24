@@ -25,7 +25,7 @@ def escape_label(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None, failover=None, bot=None) -> str:
+def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None, alerts=None, failover=None, bot=None, pull_server=None) -> str:
     lines = []
 
     def sample(name, labels, value):
@@ -63,6 +63,15 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None,
     family("wgoctopus_build_info", "gauge", "Orchestrator build information.")
     sample("wgoctopus_build_info", {"version": version}, 1)
     nodes = session.scalars(select(Node).order_by(Node.name)).all()
+    family("wgoctopus_pull_server_enabled", "gauge", "Whether the pull SSH listener is enabled.")
+    sample("wgoctopus_pull_server_enabled", {}, int(pull_server is not None))
+    family("wgoctopus_pull_tunnel_up", "gauge", "Whether a pull tunnel is connected.")
+    for node in nodes:
+        if node.mgmt_mode in ("pull", "auto"):
+            sample("wgoctopus_pull_tunnel_up", {"node": node.name}, int(bool(pull_server and pull_server.is_connected(node.id))))
+    family("wgoctopus_pull_connections_total", "counter", "Pull SSH connection outcomes.")
+    for result in ("ok", "denied"):
+        sample("wgoctopus_pull_connections_total", {"result": result}, pull_server.counters.get("connections_" + result, 0) if pull_server else 0)
     instances = session.scalars(select(Instance).order_by(Instance.name)).all()
     counts = {}
     for node in nodes:

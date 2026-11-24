@@ -1,5 +1,7 @@
 # Orchestrator data model
 
+Nodes support `mgmt_mode` values `push`, `pull`, and `auto`. `pull_public_key` is an optional normalized OpenSSH public key used to authenticate agent-initiated pull tunnels; it is safe to expose in API responses.
+
 ## CPS signature packets (I1-I5)
 
 The standalone `awgcps.py` generator builds I1 protocol-shaped signatures

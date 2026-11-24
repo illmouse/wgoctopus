@@ -1,5 +1,7 @@
 # Architecture
 
+When a pull tunnel connects, the orchestrator records the connection event and force-kicks reconciliation for that node so convergence starts immediately rather than waiting for its retry backoff.
+
 ## Client (probe) mode
 
 Client mode configures a synthetic probe interface and installs no firewall
