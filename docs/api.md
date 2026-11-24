@@ -1,5 +1,7 @@
 # Orchestrator API
 
+Local web authentication (when enabled): `POST /auth/login`, `POST /auth/logout`, and `GET /auth/me`. Account management endpoints are `GET/POST /v1/web-accounts` and `PATCH/DELETE /v1/web-accounts/{username}`. Web sessions do not authenticate other `/v1` routes. Configure with `WGOCTOPUS_WEB_ENABLED`, `WGOCTOPUS_WEB_SESSION_TTL`, `WGOCTOPUS_WEB_SESSION_IDLE`, `WGOCTOPUS_WEB_COOKIE_SECURE`, `WGOCTOPUS_WEB_ADMIN_USERNAME`, `WGOCTOPUS_WEB_ADMIN_PASSWORD` or `_FILE`.
+
 The single-process FastAPI service is mounted under `/v1`. Supply `Authorization: Bearer <token>`; the token is loaded from `WGOCTOPUS_API_TOKEN` or `WGOCTOPUS_API_TOKEN_FILE`. `/healthz` and `/readyz` are public. Missing credentials prevent startup unless the explicitly development-only `WGOCTOPUS_API_ALLOW_NO_AUTH=true` is set. Never expose unauthenticated mode to a network.
 
 | Method/path | Purpose |

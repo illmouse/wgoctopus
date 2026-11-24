@@ -233,3 +233,28 @@ class ProvisionStep(Base):
     log: Mapped[str] = mapped_column(Text, default="", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WebAccount(Base):
+    __tablename__ = "web_accounts"
+    __table_args__ = (CheckConstraint("role IN ('admin','operator','viewer')"), CheckConstraint("source IN ('local','oidc')"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, default="local", nullable=False)
+    subject: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WebSession(Base):
+    __tablename__ = "web_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("web_accounts.id", ondelete="CASCADE"), nullable=False)
+    csrf_token: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String)

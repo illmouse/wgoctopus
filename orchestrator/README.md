@@ -62,6 +62,11 @@ Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPU
 | `WGOCTOPUS_BOOTSTRAP_FILE` | unset | Optional declarative YAML bootstrap file |
 | `WGOCTOPUS_BOOTSTRAP_APPLY` | true | Apply configured bootstrap file at startup |
 | `WGOCTOPUS_AGENT_IMAGE` | ghcr.io/illmouse/wgoctopus-agent:latest | Agent image used by host provisioning (overridable per job with `image`) |
+| `WGOCTOPUS_WEB_ENABLED` | true | Enable local web authentication endpoints |
+| `WGOCTOPUS_WEB_SESSION_TTL` / `WGOCTOPUS_WEB_SESSION_IDLE` | 28800 / 3600 | Absolute and idle session lifetimes, seconds |
+| `WGOCTOPUS_WEB_COOKIE_SECURE` | auto | Cookie Secure flag; `false` disables it |
+| `WGOCTOPUS_WEB_ADMIN_USERNAME` | admin | Username for first-admin bootstrap |
+| `WGOCTOPUS_WEB_ADMIN_PASSWORD` / `_FILE` | unset | Optional first-admin password; file takes precedence |
 
 Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
 

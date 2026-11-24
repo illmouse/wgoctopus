@@ -20,7 +20,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import bootstrap, service
+from . import bootstrap, service, webauth
 from . import service_users as users
 from .alerts import AlertDispatcher, NotifyError, TelegramNotifier
 from .config import Settings, database_url
@@ -41,6 +41,7 @@ from .models import (
     Placement,
     Probe,
     UserRequest,
+    WebAccount,
 )
 from .provision import ProvisionError, ProvisionRunner, validate_options
 from .pull_server import PullServer
@@ -265,6 +266,9 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     cipher = crypto or Crypto()
     enabled = os.getenv("WGOCTOPUS_RECONCILER_ENABLED", "true").lower() == "true"
     alert_settings = Settings.from_env()
+    if alert_settings.web_enabled:
+        app_web_sessions = webauth.SessionStore(sessions, ttl_seconds=alert_settings.web_session_ttl, idle_seconds=alert_settings.web_session_idle)
+        app_web_throttle = webauth.LoginThrottle()
 
     def pull_event(kind, node_id):
         try:
@@ -411,6 +415,111 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if token and (not authorization or not authorization.startswith("Bearer ") or
                       not hmac.compare_digest(authorization[7:], token)):
             raise HTTPException(401, "authentication required", headers={"WWW-Authenticate": "Bearer"})
+
+    if alert_settings.web_enabled:
+        app.state.web_sessions, app.state.web_throttle = app_web_sessions, app_web_throttle
+
+        def web_actor(min_role="viewer", request: Request = None):
+            info = app_web_sessions.lookup(request.cookies.get("wgoctopus_session") if request else None)
+            if not info or not webauth.has_role(info.role, min_role):
+                raise HTTPException(401 if not info else 403, detail={"error": "authentication_required" if not info else "forbidden"})
+            return info
+
+        def require_web(min_role="viewer"):
+            def dependency(request: Request, x_csrf_token: str | None = Header(default=None)):
+                info = web_actor(min_role, request)
+                if request.method != "GET" and not webauth.check_csrf(info, x_csrf_token):
+                    raise HTTPException(403, detail={"error": "csrf"})
+                return info
+            return dependency
+
+        def web_error(exc):
+            status = {"invalid": 422, "weak_password": 422, "conflict": 409, "not_found": 404, "last_admin": 409}[exc.code]
+            raise HTTPException(status, detail={"error": exc.code}) from None
+
+        def account_json(a):
+            return {"username": a.username, "role": a.role, "source": a.source, "enabled": a.enabled,
+                    "created_at": a.created_at, "last_login_at": a.last_login_at}
+
+        if alert_settings.web_admin_password:
+            with sessions.begin() as session:
+                if session.scalar(select(WebAccount.id).limit(1)) is None:
+                    webauth.create_account(session, alert_settings.web_admin_username, alert_settings.web_admin_password, "admin")
+
+        @app.post("/auth/login")
+        def web_login(body: dict, request: Request, response: Response, s: Session = Depends(db)):
+            ip = request.client.host if request.client else ""
+            username = body.get("username", "")
+            if not isinstance(username, str) or not isinstance(body.get("password"), str):
+                raise HTTPException(401, detail={"error": "invalid_credentials"})
+            try:
+                account = webauth.authenticate_local(s, username, body["password"], app_web_throttle, ip)
+            except webauth.WebAuthError as exc:
+                if exc.code == "throttled":
+                    raise HTTPException(429, detail={"error": "throttled"}, headers={"Retry-After": str(app_web_throttle.lockout)}) from None
+                raise HTTPException(401, detail={"error": "invalid_credentials"}) from None
+            token, csrf = app_web_sessions.create(account.id, ip)
+            response.set_cookie("wgoctopus_session", token, httponly=True, samesite="lax", path="/", secure=alert_settings.web_cookie_secure, max_age=alert_settings.web_session_ttl)
+            return {"username": account.username, "role": account.role, "csrf_token": csrf}
+
+        @app.get("/auth/me")
+        def web_me(request: Request):
+            info = web_actor("viewer", request)
+            return {"username": info.username, "role": info.role, "csrf_token": info.csrf, "source": info.source}
+
+        @app.post("/auth/logout", status_code=204)
+        def web_logout(request: Request, response: Response, info=Depends(require_web("viewer"))):
+            app_web_sessions.revoke(request.cookies.get("wgoctopus_session"))
+            with sessions.begin() as session:
+                service._event(session, "web.logout", info.username, {})
+            response.delete_cookie("wgoctopus_session", path="/", secure=alert_settings.web_cookie_secure, httponly=True, samesite="lax")
+            return Response(status_code=204)
+
+        def account_admin(request: Request, authorization: str | None = Header(default=None), x_csrf_token: str | None = Header(default=None)):
+            if token and authorization and authorization.startswith("Bearer ") and hmac.compare_digest(authorization[7:], token):
+                return None
+            info = web_actor("admin", request)
+            if request.method != "GET" and not webauth.check_csrf(info, x_csrf_token):
+                raise HTTPException(403, detail={"error": "csrf"})
+            return info
+
+        @app.get("/v1/web-accounts", dependencies=[Depends(account_admin)])
+        def web_accounts(s: Session = Depends(db)):
+            return [account_json(a) for a in webauth.list_accounts(s)]
+
+        @app.post("/v1/web-accounts", dependencies=[Depends(account_admin)], status_code=201)
+        def web_account_create(body: dict, s: Session = Depends(db)):
+            try:
+                return account_json(webauth.create_account(s, body.get("username"), body.get("password"), body.get("role"), body.get("source", "local")))
+            except webauth.WebAuthError as exc: web_error(exc)
+
+        @app.patch("/v1/web-accounts/{username}", dependencies=[Depends(account_admin)])
+        def web_account_patch(username: str, body: dict, s: Session = Depends(db)):
+            account = s.scalar(select(WebAccount).where(WebAccount.username == username.lower()))
+            if not account: raise HTTPException(404, detail={"error": "not_found"})
+            try:
+                if body.get("password") is not None: webauth.set_password(s, account, body["password"])
+                if body.get("role") is not None: webauth.set_role(s, account, body["role"])
+                if body.get("enabled") is not None: webauth.set_enabled(s, account, body["enabled"])
+                if body.get("enabled") is False: app_web_sessions.revoke_account(account.id)
+                return account_json(account)
+            except webauth.WebAuthError as exc: web_error(exc)
+
+        @app.delete("/v1/web-accounts/{username}", dependencies=[Depends(account_admin)], status_code=204)
+        def web_account_delete(username: str, s: Session = Depends(db)):
+            account = s.scalar(select(WebAccount).where(WebAccount.username == username.lower()))
+            if not account: raise HTTPException(404, detail={"error": "not_found"})
+            try: webauth.delete_account(s, account)
+            except webauth.WebAuthError as exc: web_error(exc)
+
+    else:
+        app.state.web_sessions = app.state.web_throttle = None
+        @app.api_route("/auth/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+        @app.api_route("/auth", methods=["GET", "POST", "PATCH", "DELETE"])
+        @app.api_route("/v1/web-accounts/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+        @app.api_route("/v1/web-accounts", methods=["GET", "POST", "PATCH", "DELETE"])
+        def web_disabled():
+            raise HTTPException(404, detail={"error": "not_found"})
 
     @app.get("/v1/bootstrap", dependencies=[Depends(auth)])
     def bootstrap_status():

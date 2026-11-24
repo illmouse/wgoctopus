@@ -59,6 +59,12 @@ class Settings:
     bootstrap_file: str | None = None
     bootstrap_apply: bool = True
     agent_image: str = "ghcr.io/illmouse/wgoctopus-agent:latest"
+    web_enabled: bool = True
+    web_session_ttl: int = 28800
+    web_session_idle: int = 3600
+    web_cookie_secure: bool = True
+    web_admin_username: str = "admin"
+    web_admin_password: str | None = field(default=None, repr=False)
 
     @property
     def telegram_buttons_enabled(self):
@@ -148,9 +154,26 @@ class Settings:
         bootstrap_apply = os.getenv("WGOCTOPUS_BOOTSTRAP_APPLY", "true").lower()
         if bootstrap_apply not in {"true", "false"}:
             raise ValueError("WGOCTOPUS_BOOTSTRAP_APPLY must be true or false")
+        web_enabled = os.getenv("WGOCTOPUS_WEB_ENABLED", "true").lower()
+        secure = os.getenv("WGOCTOPUS_WEB_COOKIE_SECURE", "auto").lower()
+        if web_enabled not in {"true", "false"} or secure not in {"auto", "true", "false"}:
+            raise ValueError("invalid web authentication setting")
+        web_password = os.getenv("WGOCTOPUS_WEB_ADMIN_PASSWORD")
+        password_file = os.getenv("WGOCTOPUS_WEB_ADMIN_PASSWORD_FILE")
+        if password_file:
+            try:
+                web_password = Path(password_file).read_text().strip()
+            except OSError as exc:
+                raise ValueError("cannot read WGOCTOPUS_WEB_ADMIN_PASSWORD_FILE") from exc
         return cls(**{**settings.__dict__, "pull_listen": pull_listen,
                       "pull_host_key_file": os.getenv("WGOCTOPUS_PULL_HOST_KEY_FILE"),
                       "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20")),
                       "bootstrap_file": os.getenv("WGOCTOPUS_BOOTSTRAP_FILE") or None,
                       "bootstrap_apply": bootstrap_apply == "true",
-                      "agent_image": os.getenv("WGOCTOPUS_AGENT_IMAGE", "ghcr.io/illmouse/wgoctopus-agent:latest")})
+                      "agent_image": os.getenv("WGOCTOPUS_AGENT_IMAGE", "ghcr.io/illmouse/wgoctopus-agent:latest"),
+                      "web_enabled": web_enabled == "true",
+                      "web_session_ttl": int(os.getenv("WGOCTOPUS_WEB_SESSION_TTL", "28800")),
+                      "web_session_idle": int(os.getenv("WGOCTOPUS_WEB_SESSION_IDLE", "3600")),
+                      "web_cookie_secure": secure != "false",
+                      "web_admin_username": os.getenv("WGOCTOPUS_WEB_ADMIN_USERNAME", "admin"),
+                      "web_admin_password": web_password})

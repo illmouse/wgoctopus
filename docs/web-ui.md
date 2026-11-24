@@ -27,6 +27,10 @@ Scope of the first version: **admin panel only**. End users keep using the Teleg
 
 Secrets (private keys, tokens, SSH keys) are never rendered in the UI; the peer client config download is an explicit audited action (already an event).
 
+## Local authentication
+
+`POST /auth/login` accepts `{username,password}` and sets the `wgoctopus_session` cookie; `GET /auth/me` reports the current identity and CSRF token, and `POST /auth/logout` requires `X-CSRF-Token`. Sessions use absolute and idle expiry. `/v1` continues to require its static bearer token; account management is at `GET/POST /v1/web-accounts` and `PATCH/DELETE /v1/web-accounts/{username}`. Bootstrap the first local admin with `WGOCTOPUS_WEB_ADMIN_PASSWORD` or `_FILE` (file takes precedence), optionally set `WGOCTOPUS_WEB_ADMIN_USERNAME`.
+
 ## Bootstrap YAML
 
 Mounted as a file (`WGOCTOPUS_BOOTSTRAP_FILE`). Applied on start when `WGOCTOPUS_BOOTSTRAP_APPLY=true` (default) and via `POST /v1/bootstrap/apply` (supports `dry_run`). Secrets are referenced, never inlined: `{env: NAME}` or `{file: /path}`.
@@ -82,4 +86,4 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (local + OIDC); 7.4 web UI pages; k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3a local accounts done, 7.3b OIDC pending); 7.4 web UI pages; k3s manifests and backups.
