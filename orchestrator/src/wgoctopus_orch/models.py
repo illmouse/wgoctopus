@@ -27,6 +27,10 @@ class Instance(Base):
     mtu: Mapped[int | None] = mapped_column(Integer)
     egress_interface: Mapped[str | None] = mapped_column(String(15))
     snat_ip: Mapped[str | None] = mapped_column(String)
+    endpoint_host: Mapped[str | None] = mapped_column(String)
+    client_dns: Mapped[str | None] = mapped_column(String)
+    client_keepalive: Mapped[int | None] = mapped_column(Integer)
+    client_allowed_ips: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
 
 

@@ -69,6 +69,10 @@ class InstanceIn(Strict):
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
+    endpoint_host: str | None = None
+    client_dns: str | None = None
+    client_keepalive: int | None = Field(default=None, ge=0, le=65535)
+    client_allowed_ips: str | None = None
 
 
 class InstancePatch(Strict):
@@ -76,6 +80,10 @@ class InstancePatch(Strict):
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
+    endpoint_host: str | None = None
+    client_dns: str | None = None
+    client_keepalive: int | None = Field(default=None, ge=0, le=65535)
+    client_allowed_ips: str | None = None
 
 
 class PlacementIn(Strict):
@@ -342,6 +350,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                     obfuscation={**{k:v for k,v in i.obfuscation.items() if k != "header_protection_key"},
                                  **({"header_protection_key_set": True} if i.obfuscation.get("header_protection_key") else {})},
                     mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
+                    endpoint_host=i.endpoint_host, client_dns=i.client_dns,
+                    client_keepalive=i.client_keepalive, client_allowed_ips=i.client_allowed_ips,
                      placements=[dict(node_id=p.node_id, role=p.role, weight=p.weight) for p in placements],
                      active_node_id=next((p.node_id for p in placements if p.role == "active"), None), peer_count=peers,
                     created_at=i.created_at)
@@ -399,7 +409,9 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             instance = service.create_instance(s, body.name, body.listen_port, body.address,
                 obfuscation=body.obfuscation, mtu=body.mtu, cps_profile=body.cps_profile,
                 intensity=body.intensity, egress_interface=body.egress_interface,
-                snat_ip=body.snat_ip, crypto=cipher, awg_version=body.awg_version)
+                snat_ip=body.snat_ip, endpoint_host=body.endpoint_host, client_dns=body.client_dns,
+                client_keepalive=body.client_keepalive, client_allowed_ips=body.client_allowed_ips,
+                crypto=cipher, awg_version=body.awg_version)
         except ValueError:
             raise HTTPException(422, "invalid instance parameters") from None
         return inst(instance, s)
@@ -418,9 +430,15 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         i=s.get(Instance,ident)
         if not i: raise HTTPException(404,"unknown instance")
         changes = body.model_dump(exclude_unset=True)
+        for key, validator in (("endpoint_host", service.validate_endpoint_host),
+                               ("client_dns", service.validate_client_dns),
+                               ("client_allowed_ips", service.validate_client_allowed_ips)):
+            if key in changes:
+                changes[key] = validator(changes[key])
         for k,v in changes.items(): setattr(i,k,v)
         nodes=placed_nodes(s,ident); s.flush()
-        for n in nodes: service.bump_revision(s,n,cipher)
+        if {"listen_port", "mtu", "egress_interface", "snat_ip"} & changes.keys():
+            for n in nodes: service.bump_revision(s,n,cipher)
         if "listen_port" in changes: service._bump_hops(s,ident,cipher)
         if {"listen_port", "mtu"} & changes.keys(): service._bump_probe_runners(s,instance_id=ident,crypto=cipher)
         kick(s,nodes); return inst(i,s)
@@ -598,7 +616,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     def peer_config(ident:int,endpoint_host:str|None=None,s:Session=Depends(db)):
         p=s.get(Peer, ident)
         if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
-        endpoint_host=endpoint_host or os.getenv("WGOCTOPUS_CLIENT_ENDPOINT_HOST")
+        instance=s.get(Instance,p.instance_id)
+        endpoint_host=instance.endpoint_host or endpoint_host or os.getenv("WGOCTOPUS_CLIENT_ENDPOINT_HOST")
         if not endpoint_host: raise HTTPException(422,"endpoint_host is required")
         text=service.render_client_config(s,ident,endpoint_host,crypto=cipher)
         s.add(Event(kind="peer.config_issued",subject=str(ident),data={}))

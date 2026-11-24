@@ -15,6 +15,13 @@ def generate_keypair() -> tuple[str, str]:
     return base64.b64encode(raw_private).decode(), base64.b64encode(raw_public).decode()
 
 
+def derive_public(private_b64: str) -> str:
+    private = X25519PrivateKey.from_private_bytes(base64.b64decode(private_b64, validate=True))
+    return base64.b64encode(private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )).decode()
+
+
 def generate_psk() -> str:
     return base64.b64encode(secrets.token_bytes(32)).decode()
 

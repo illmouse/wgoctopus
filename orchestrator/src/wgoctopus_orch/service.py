@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .awgcps import generate_cps, validate_cps_chain
 from .awgparams import generate_obfuscation, validate_3x_fields, validate_obfuscation
 from .crypto import Crypto
-from .keys import generate_keypair, generate_psk, next_free_peer_ip
+from .keys import derive_public, generate_keypair, generate_psk, next_free_peer_ip
 from .models import (
     Event,
     HopLink,
@@ -49,9 +49,48 @@ def _default_obfuscation(mtu=None, version="2.0"):
     return generate_obfuscation(version=version, mtu=mtu or 1500)
 
 
+def validate_endpoint_host(value):
+    if value is None:
+        return None
+    try:
+        if len(value) > 253 or not value or any(c.isspace() for c in value) or "://" in value:
+            raise ValueError
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            value = value.removesuffix(".")
+            if not value or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", part)
+                                for part in value.split(".")):
+                raise ValueError
+        return value
+    except (TypeError, ValueError):
+        raise ValueError("invalid endpoint_host") from None
+
+
+def _ip_list(value, parser, field):
+    if value is None:
+        return None
+    try:
+        entries = [parser(part.strip()) for part in value.split(",")]
+        if not entries or any(not part.strip() for part in value.split(",")):
+            raise ValueError
+        return ", ".join(str(entry) for entry in entries)
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError(f"invalid {field}") from None
+
+
+def validate_client_dns(value):
+    return _ip_list(value, ipaddress.ip_address, "client_dns")
+
+
+def validate_client_allowed_ips(value):
+    return _ip_list(value, ipaddress.ip_network, "client_allowed_ips")
+
+
 def create_instance(session: Session, name, listen_port, address, *, obfuscation=None, mtu=None,
                     cps_profile=None, intensity="medium",
-                    egress_interface=None, snat_ip=None, crypto=None, awg_version="2.0"):
+                    egress_interface=None, snat_ip=None, private_key=None, endpoint_host=None,
+                    client_dns=None, client_keepalive=None, client_allowed_ips=None, crypto=None, awg_version="2.0"):
     if not re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", name):
         raise ValueError("instance name must be a valid state interface name (1-15 characters)")
     ipaddress.ip_interface(address)
@@ -75,11 +114,25 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
         invalid = True
     if invalid:
         raise ValueError("invalid obfuscation parameters")
-    private, public = generate_keypair()
+    endpoint_host = validate_endpoint_host(endpoint_host)
+    client_dns = validate_client_dns(client_dns)
+    client_allowed_ips = validate_client_allowed_ips(client_allowed_ips)
+    if client_keepalive is not None and (not isinstance(client_keepalive, int) or not 0 <= client_keepalive <= 65535):
+        raise ValueError("invalid client_keepalive")
+    try:
+        if private_key is not None and (len(private_key) != 44 or len(__import__("base64").b64decode(private_key, validate=True)) != 32):
+            raise ValueError
+        public = derive_public(private_key) if private_key is not None else None
+    except (ValueError, TypeError):
+        raise ValueError("invalid private key") from None
+    private, public_generated = generate_keypair() if private_key is None else (private_key, public)
+    public = public or public_generated
     instance = Instance(name=name, listen_port=listen_port, address=address,
                         private_key_enc=_crypto(crypto).encrypt(private), public_key=public,
                         obfuscation=obfuscation, mtu=mtu,
-                        egress_interface=egress_interface, snat_ip=snat_ip)
+                        egress_interface=egress_interface, snat_ip=snat_ip, endpoint_host=endpoint_host,
+                        client_dns=client_dns, client_keepalive=client_keepalive,
+                        client_allowed_ips=client_allowed_ips)
     with _transaction(session):
         session.add(instance)
         session.flush()
@@ -276,6 +329,47 @@ def add_peer(session: Session, instance_id, name, *, owner=None, crypto=None):
     return peer
 
 
+def import_peer(session: Session, instance_id, name, *, public_key=None, private_key=None,
+                preshared_key=None, allowed_ip, enabled=True, owner=None, crypto=None):
+    crypto = _crypto(crypto)
+    if private_key is None and public_key is None:
+        raise ValueError("public_key or private_key is required")
+    try:
+        derived = derive_public(private_key) if private_key is not None else None
+    except (ValueError, TypeError):
+        raise ValueError("invalid private key") from None
+    if public_key is not None and derived is not None and public_key != derived:
+        raise ValueError("key mismatch")
+    public_key = public_key or derived
+    with _transaction(session):
+        instance = session.get(Instance, instance_id)
+        if instance is None:
+            raise ValueError(f"unknown instance {instance_id}")
+        try:
+            address = ipaddress.ip_address(allowed_ip)
+            network = ipaddress.ip_interface(instance.address).network
+            instance_ip = ipaddress.ip_interface(instance.address).ip
+            if address.version != 4 or address not in network or address in (network.network_address, network.broadcast_address, instance_ip):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("invalid allowed_ip") from None
+        if session.scalar(select(Peer.id).where(Peer.instance_id == instance_id, Peer.allowed_ip == str(address))):
+            raise ValueError("allowed_ip already exists")
+        if session.scalar(select(Peer.id).where(Peer.instance_id == instance_id, Peer.public_key == public_key)):
+            raise ValueError("public_key already exists")
+        peer = Peer(instance_id=instance_id, name=name, public_key=public_key,
+                    private_key_enc=crypto.encrypt(private_key) if private_key is not None else "",
+                    preshared_key_enc=crypto.encrypt(preshared_key) if preshared_key else "",
+                    allowed_ip=str(address), enabled=enabled, owner=owner)
+        session.add(peer)
+        session.flush()
+        _event(session, "peer.created", str(peer.id), {"instance_id": instance_id, "allowed_ip": peer.allowed_ip})
+        node_ids = session.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()
+    for node_id in node_ids:
+        bump_revision(session, node_id, crypto)
+    return peer
+
+
 def set_peer_enabled(session: Session, peer_id, enabled: bool, crypto=None):
     with _transaction(session):
         peer = session.get(Peer, peer_id)
@@ -305,19 +399,25 @@ def remove_peer(session: Session, peer_id, crypto=None):
     return True
 
 
-def render_client_config(session: Session, peer_id, endpoint_host, *, dns=None, crypto=None) -> str:
+def render_client_config(session: Session, peer_id, endpoint_host=None, *, dns=None, crypto=None) -> str:
     peer = session.get(Peer, peer_id)
     if peer is None or not peer.enabled:
         raise ValueError("peer not found or disabled")
     if not peer.private_key_enc:
         raise ValueError("peer has no stored private key")
     instance = session.get(Instance, peer.instance_id)
+    endpoint_host = instance.endpoint_host or endpoint_host
+    if not endpoint_host:
+        raise ValueError("endpoint_host is required")
+    dns = instance.client_dns if dns is None else dns
     c = _crypto(crypto)
     o = instance.obfuscation
     lines = ["[Interface]", f"PrivateKey = {c.decrypt(peer.private_key_enc)}",
              f"Address = {peer.allowed_ip}/32" if ":" not in peer.allowed_ip else f"Address = {peer.allowed_ip}/128"]
     if dns:
         lines.append(f"DNS = {dns}")
+    if instance.mtu is not None:
+        lines.append(f"MTU = {instance.mtu}")
     names = {"jc": "Jc", "jmin": "Jmin", "jmax": "Jmax", **{f"s{i}": f"S{i}" for i in range(1, 5)},
              **{f"h{i}": f"H{i}" for i in range(1, 5)}, **{f"i{i}": f"I{i}" for i in range(1, 6)}}
     lines.extend(f"{label} = {o[key]}" for key, label in names.items() if key in o and o[key] != "")
@@ -332,6 +432,6 @@ def render_client_config(session: Session, peer_id, endpoint_host, *, dns=None, 
     lines.extend(["", "[Peer]", f"PublicKey = {instance.public_key}"])
     if peer.preshared_key_enc:
         lines.append(f"PresharedKey = {c.decrypt(peer.preshared_key_enc)}")
-    lines.extend(["AllowedIPs = 0.0.0.0/0", f"Endpoint = {endpoint_host}:{instance.listen_port}",
-                  "PersistentKeepalive = 25", ""])
+    lines.extend([f"AllowedIPs = {instance.client_allowed_ips or '0.0.0.0/0'}", f"Endpoint = {endpoint_host}:{instance.listen_port}",
+                  f"PersistentKeepalive = {instance.client_keepalive if instance.client_keepalive is not None else 25}", ""])
     return "\n".join(lines)

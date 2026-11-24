@@ -46,6 +46,8 @@ A probe's identity is a normal `peers` row owned by `__probe__`; its encrypted p
 ## Failover proposals
 
 Proposals are stored as `pending`, then become `executed`, `rejected`, `expired`, `cancelled`, or `failed`. Creation records the mode and expiry; decisions record the actor/time. The down-duration tracker is in memory, so it resets on orchestrator restart.
+
+Instances may also store `endpoint_host`, comma-separated `client_dns`, `client_keepalive`, and comma-separated `client_allowed_ips` for generated client configurations. Existing AWG servers can be imported with `create_instance(private_key=...)` and `import_peer(...)`; these preserve supplied keys, PSKs, and addresses while encrypting secret keys at rest. Key import is an offline-CLI/service operation only, never an HTTP operation, to avoid exposing long-lived private keys to the API.
 # AWG 3.x obfuscation
 
 AWG 3.x interfaces may include header protection, content padding, rekey/reject/keepalive timers, and maximum handshake attempts. AWG 3.1 may additionally enable random trailers. These values are carried in desired state and client configs. Rotating or changing these values (especially the header protection key and S values) is dangerous and may disconnect every client; coordinate updates and distribute the matching client config.

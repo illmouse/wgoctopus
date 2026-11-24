@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from wgoctopus_orch.crypto import Crypto, Secret
-from wgoctopus_orch.keys import generate_keypair, generate_psk, next_free_peer_ip
+from wgoctopus_orch.keys import derive_public, generate_keypair, generate_psk, next_free_peer_ip
 
 
 def test_crypto_redacts_roundtrip_and_rejects_wrong_key():
@@ -30,6 +30,13 @@ def test_keypair_and_psk_are_wireguard_keys():
         serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     assert base64.b64encode(derived).decode() == public
     assert len(base64.b64decode(generate_psk())) == 32
+
+
+def test_derive_public_matches_fixed_seed_generation_path():
+    private = base64.b64encode(bytes(range(32))).decode()
+    raw = X25519PrivateKey.from_private_bytes(base64.b64decode(private)).public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    assert derive_public(private) == base64.b64encode(raw).decode()
 
 
 def test_ip_allocation_skips_server_and_used_addresses_and_exhaustion():

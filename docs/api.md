@@ -76,3 +76,12 @@ Create a synthetic client with `POST /v1/probes` and `{ "hop_id": 1, "instance_i
 # Telegram failover callbacks
 
 `GET /v1/alerts` includes `buttons_enabled`. When enabled, `failover.proposed` messages include Telegram Confirm/Reject buttons; the existing authenticated API decision endpoints remain available.
+# Instance client settings
+
+Instance responses expose `endpoint_host`, `client_dns`, `client_keepalive`, and
+`client_allowed_ips` (nullable). Instance creation and PATCH accept these
+settings. DNS and allowed IPs are comma-separated values; PATCH null clears a
+setting. Client settings do not change agent desired state or node revisions.
+PATCH also accepts `mtu`, `egress_interface`, and `snat_ip`, which retain their
+existing desired-state revision behavior. Private key import is deliberately
+not available through HTTP.
