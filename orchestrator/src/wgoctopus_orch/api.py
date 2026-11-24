@@ -588,17 +588,27 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         else:
             raise HTTPException(404, "bootstrap not configured")
         try:
-            result = bootstrap.apply_bootstrap(sessions, document, crypto=cipher, dry_run=body.get("dry_run", False))
+            return bootstrap_run(document, body.get("dry_run", False))
         except bootstrap.BootstrapError as exc:
             return JSONResponse(status_code=422, content={"error": "validation_error", "detail": exc.errors})
+
+    def bootstrap_run(document, dry_run):
+        result = bootstrap.apply_bootstrap(sessions, document, crypto=cipher, dry_run=dry_run)
         report = {key: getattr(result, key) for key in ("created", "updated", "unchanged", "pruned", "warnings")}
-        if not body.get("dry_run", False):
-            affected = []
+        if not dry_run:
             with sessions() as session:
                 affected = session.scalars(select(Node.id).where(Node.name.in_([*{r.get("node") for r in document.get("placements", [])}, *{r.get("hop") for r in document.get("hop_links", [])}]))).all()
                 kick(session, affected)
             app.state.bootstrap_last_apply = {"at": time.time(), "ok": True, "summary": {k: sum(map(len, report[k].values())) for k in ("created", "updated", "unchanged", "pruned")}}
         return report
+
+    def bootstrap_file_op(_s, dry_run):
+        """UI variant: always applies the configured file (never a posted document)."""
+        if not alert_settings.bootstrap_file:
+            raise HTTPException(404, "bootstrap not configured")
+        try: document = bootstrap.load_yaml(Path(alert_settings.bootstrap_file).read_text())
+        except OSError: raise HTTPException(422, "bootstrap file is not readable") from None
+        return bootstrap_run(document, dry_run)
 
     @app.get("/metrics", response_class=Response)
     def metrics(s: Session = Depends(db), _auth=Depends(auth) if not Settings.from_env().metrics_public else None):
@@ -658,15 +668,30 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         if not p: raise HTTPException(404, "not_found")
         return proposal_json(p)
 
+    def failover_op(_s, ident, action, by, actor):
+        if not app.state.failover: raise HTTPException(409, "disabled")
+        try: return proposal_json(getattr(app.state.failover, action)(ident, by=by, actor=actor))
+        except FailoverError as exc:
+            raise HTTPException(404 if exc.code == "not_found" else 409, exc.code) from None
+
     def decide(ident, action, decision):
         if not app.state.failover: raise HTTPException(409, "disabled")
         by, actor = decision.get("by", "api"), decision.get("actor")
         if by not in {"api", "telegram"} or (actor is not None and (not isinstance(actor, str) or len(actor) > 64)):
             raise HTTPException(422, "invalid decision")
-        try: return proposal_json(getattr(app.state.failover, action)(ident, by=by, actor=actor))
-        except FailoverError as exc:
-            code = "not_found" if exc.code == "not_found" else exc.code
-            raise HTTPException(404 if code == "not_found" else 409, code) from None
+        return failover_op(None, ident, action, by, actor)
+
+    def failovers_page(s, state, limit, offset):
+        query = select(FailoverProposal)
+        if state: query = query.where(FailoverProposal.state == state)
+        total = s.scalar(select(func.count()).select_from(query.subquery()))
+        names = dict(s.execute(select(Node.id, Node.name)).all())
+        inst_names = dict(s.execute(select(Instance.id, Instance.name)).all())
+        rows = [dict(proposal_json(p), instance=inst_names.get(p.instance_id, p.instance_id), hop=names.get(p.hop_id, p.hop_id), from_node=names.get(p.from_node_id, p.from_node_id), to_node=names.get(p.to_node_id, p.to_node_id)) for p in s.scalars(query.order_by(FailoverProposal.id.desc()).limit(limit).offset(offset))]
+        return rows, total
+
+    def failover_info():
+        return failover_settings() | {"active": app.state.failover is not None}
 
     @app.post("/v1/failovers/{ident}/confirm", dependencies=[Depends(auth)])
     def confirm_failover(ident: int, decision: dict | None = Body(None)): return decide(ident, "confirm", decision or {})
@@ -1123,13 +1148,28 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             total = s.scalar(select(func.count()).select_from(query.subquery()))
             return [peer(p) for p in s.scalars(query.order_by(Peer.id).offset(offset).limit(limit))], total
 
+        def requests_page(s, status, limit, offset):
+            query = select(UserRequest)
+            if status: query = query.where(UserRequest.status == status)
+            total = s.scalar(select(func.count()).select_from(query.subquery()))
+            return [request_json(r) for r in s.scalars(query.order_by(UserRequest.id.desc()).limit(limit).offset(offset))], total
+
+        def approve_op(s, ident, default_limit):
+            return user_call(users.approve_request, s, ident, None, None, default_limit)
+
+        def decline_op(s, ident):
+            return user_call(users.decline_request, s, ident, None, None)
+
         webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary,
                     nodes=lambda s: [node(n, s) for n in s.scalars(select(Node).order_by(Node.name))],
                     node_view=node_view, provision=lambda: app.state.provision,
                     instances=lambda s: [inst(i, s) for i in s.scalars(select(Instance).order_by(Instance.name))],
                     instance_view=instance_view, peers_page=peers_page,
                     ops=SimpleNamespace(add_peer=add_peer_op, set_enabled=peer_enabled_op, remove_peer=peer_remove_op,
-                                        config=peer_config_op, switch=switch_op))
+                                        config=peer_config_op, switch=switch_op, failover=failover_op, approve=approve_op,
+                                        decline=decline_op, bootstrap=bootstrap_file_op),
+                    failovers=failovers_page, failover_info=failover_info, requests=requests_page,
+                    bootstrap_info=lambda: dict(bootstrap_status(), configured_apply=alert_settings.bootstrap_apply))
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

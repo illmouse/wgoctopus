@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Failover - wgoctopus{% endblock %}
+{% block body %}
+<h1>Failover</h1>
+<div class="card">
+  <dl>
+    <dt>Mode</dt><dd><span class="badge {{ 'muted' if settings.mode == 'off' else 'ok' }}">{{ settings.mode }}</span>{% if not settings.active %} evaluator not running{% endif %}</dd>
+    <dt>Down for</dt><dd>{{ settings.down_seconds }} s before a proposal</dd>
+    <dt>Proposal TTL</dt><dd>{{ settings.proposal_ttl_seconds }} s</dd>
+    <dt>Cooldown</dt><dd>{{ settings.cooldown_seconds }} s</dd>
+    <dt>Evaluation interval</dt><dd>{{ settings.eval_interval }} s</dd>
+  </dl>
+</div>
+
+<h2>Pending proposals</h2>
+<div id="failover-result"></div>
+{% include "_failover_pending.html" %}
+
+<h2>History ({{ total }})</h2>
+<p class="pager">
+  <a href="/ui/failover">all</a>
+  {% for st in states %}<a href="/ui/failover?state={{ st }}"{% if st == state %} class="active"{% endif %}>{{ st }}</a>{% endfor %}
+</p>
+<table>
+  <thead><tr><th>#</th><th>Instance</th><th>From &rarr; To</th><th>State</th><th>Created</th><th>Decided</th><th>By</th><th>Error</th></tr></thead>
+  <tbody>
+  {% for p in history %}
+  <tr>
+    <td>{{ p.id }}</td><td>{{ p.instance }}</td><td>{{ p.from_node }} &rarr; {{ p.to_node }}</td>
+    <td><span class="badge {{ 'warn' if p.state == 'pending' else state_class.get(p.state, 'bad') }}">{{ p.state }}</span></td>
+    <td>{{ p.created_at|ts }}</td><td>{{ p.decided_at|ts }}</td><td>{{ p.decided_by or "-" }}</td><td>{{ p.error or "" }}</td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">No proposals</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="pager">
+  {% if offset > 0 %}<a href="/ui/failover?state={{ state }}&amp;offset={{ [offset - page_size, 0]|max }}">&larr; Newer</a>{% endif %}
+  {% if offset + page_size < total %}<a href="/ui/failover?state={{ state }}&amp;offset={{ offset + page_size }}">Older &rarr;</a>{% endif %}
+</p>
+{% endblock %}

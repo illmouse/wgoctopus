@@ -3,6 +3,7 @@
 Pages authenticate with the session cookie only (never the static bearer token) and
 never expose /v1 to cookie sessions; they call the same service functions as the API.
 """
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -24,11 +25,16 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
-NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes"), ("/ui/instances", "Instances")]
+NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes"), ("/ui/instances", "Instances"), ("/ui/failover", "Failover"),
+       ("/ui/requests", "Requests"), ("/ui/bootstrap", "Bootstrap")]
 PEER_PAGE = 50
+LIST_PAGE = 50
+FAILOVER_STATES = ("pending", "executed", "rejected", "expired", "cancelled", "failed")
+REQUEST_STATES = ("pending", "approved", "declined")
 STATE_CLASS = {"IN_SYNC": "ok", "SYNCING": "warn", "DISABLED": "muted", "UNKNOWN": "muted",
                "succeeded": "ok", "running": "warn", "queued": "warn", "failed": "bad", "cancelled": "muted",
-               "ok": "ok", "pending": "muted", "skipped": "muted"}
+               "ok": "ok", "pending": "muted", "skipped": "muted",
+               "executed": "ok", "rejected": "muted", "expired": "muted", "approved": "ok", "declined": "muted"}
 ACTIVE_JOB = ("queued", "running")
 
 
@@ -42,14 +48,17 @@ def build_env():
     return env
 
 
-def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instances, instance_view, peers_page, ops):
+def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instances, instance_view, peers_page, ops,
+          failovers, failover_info, requests, bootstrap_info):
     """Register UI routes.
 
     `lookup(cookie)` returns a session info or None; `status(session)` is the fleet summary;
     `nodes(session)` lists node views, `node_view(session, id)` returns one or None;
     `provision()` returns the provisioning runner; `instances(session)`, `instance_view(session, id)` and
-    `peers_page(session, id, limit, offset)` read instances and peers; `ops` holds the peer/switch operations
-    shared with the API (add_peer, set_enabled, remove_peer, config, switch).
+    `peers_page(session, id, limit, offset)` read instances and peers; `ops` holds the operations shared with
+    the API (add_peer, set_enabled, remove_peer, config, switch, failover, approve, decline, bootstrap).
+    `failovers(session, state, limit, offset)`, `failover_info()`, `requests(session, status, limit, offset)`
+    and `bootstrap_info()` feed the failover, requests and bootstrap pages.
     """
     env = build_env()
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -197,7 +206,8 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 return result, None
             except HTTPException as exc:
                 s.rollback()
-                return None, str(exc.detail)
+                detail = exc.detail
+                return None, str(detail.get("detail", detail.get("error")) if isinstance(detail, dict) else detail)
             except ValueError as exc:
                 s.rollback()
                 return None, str(exc)
@@ -284,3 +294,102 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if error:
             return message(request, info, 404 if "unknown" in error else 409, error)
         return Response(text, media_type="text/plain", headers={**SECURITY_HEADERS, "Content-Disposition": f'attachment; filename="peer-{peer_id}.conf"'})
+
+    # failover proposals
+    def pending_proposals():
+        with sessions() as s:
+            return failovers(s, "pending", 100, 0)[0]
+
+    @app.get("/ui/failover", include_in_schema=False)
+    def failover_page(request: Request, state: str = "", offset: int = 0):
+        info, denied = check(request)
+        if denied:
+            return denied
+        state, offset = (state if state in FAILOVER_STATES else ""), max(offset, 0)
+        with sessions() as s:
+            history, total = failovers(s, state or None, LIST_PAGE, offset)
+        return render("failover.html", request, info, settings=failover_info(), proposals=pending_proposals(), history=history, total=total,
+                      state=state, states=FAILOVER_STATES, offset=offset, page_size=LIST_PAGE, can_operate=webauth.has_role(info.role, "operator"))
+
+    @app.get("/ui/fragments/failover", include_in_schema=False)
+    def failover_fragment(request: Request):
+        info, denied = check(request, page=False)
+        return denied or render("_failover_pending.html", request, info, proposals=pending_proposals(), can_operate=webauth.has_role(info.role, "operator"))
+
+    def decide_failover(request, info, proposal_id, action):
+        _, error = run(ops.failover, proposal_id, action, "web", info.username[:64])
+        if not error:
+            audit(f"web.failover_{action}", info, {"proposal_id": proposal_id})
+        return refreshed(request, info, error)
+
+    @app.post("/ui/failovers/{proposal_id}/confirm", include_in_schema=False)
+    def failover_confirm(proposal_id: int, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        return denied or decide_failover(request, info, proposal_id, "confirm")
+
+    @app.post("/ui/failovers/{proposal_id}/reject", include_in_schema=False)
+    def failover_reject(proposal_id: int, request: Request):
+        info, denied = check(request, "operator", write=True, page=False)
+        return denied or decide_failover(request, info, proposal_id, "reject")
+
+    # access and limit requests (approving creates or changes users, so deciding is admin-only)
+    @app.get("/ui/requests", include_in_schema=False)
+    def requests_page(request: Request, status: str = "pending", offset: int = 0):
+        info, denied = check(request)
+        if denied:
+            return denied
+        status, offset = (status if status in REQUEST_STATES else "all"), max(offset, 0)
+        with sessions() as s:
+            rows, total = requests(s, None if status == "all" else status, LIST_PAGE, offset)
+        return render("requests.html", request, info, requests=rows, total=total, status=status, states=REQUEST_STATES, offset=offset,
+                      page_size=LIST_PAGE, can_decide=webauth.has_role(info.role, "admin"))
+
+    @app.post("/ui/requests/{request_id}/approve", include_in_schema=False)
+    async def request_approve(request_id: int, request: Request):
+        info, denied = check(request, "admin", write=True, page=False)
+        if denied:
+            return denied
+        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        try:
+            limit = int((form.get("default_limit") or ["3"])[0])
+        except ValueError:
+            limit = -2
+        if limit < -1:
+            return render("_error.html", request, info, text="Device limit must be a number, -1 for unlimited.")
+        _, error = run(ops.approve, request_id, limit)
+        if not error:
+            audit("web.request_approve", info, {"request_id": request_id, "default_limit": limit})
+        return refreshed(request, info, error)
+
+    @app.post("/ui/requests/{request_id}/decline", include_in_schema=False)
+    def request_decline(request_id: int, request: Request):
+        info, denied = check(request, "admin", write=True, page=False)
+        if denied:
+            return denied
+        _, error = run(ops.decline, request_id)
+        if not error:
+            audit("web.request_decline", info, {"request_id": request_id})
+        return refreshed(request, info, error)
+
+    # bootstrap (status for everyone, apply is admin-only and always uses the configured file)
+    @app.get("/ui/bootstrap", include_in_schema=False)
+    def bootstrap_page(request: Request):
+        info, denied = check(request)
+        if denied:
+            return denied
+        data = bootstrap_info()
+        last = data.get("last_apply")
+        if last:
+            last = dict(last, at=datetime.fromtimestamp(last["at"], UTC))
+        return render("bootstrap.html", request, info, boot=dict(data, last_apply=last), can_apply=webauth.has_role(info.role, "admin"))
+
+    @app.post("/ui/bootstrap/apply", include_in_schema=False)
+    def bootstrap_apply(request: Request, dry_run: bool = True):
+        info, denied = check(request, "admin", write=True, page=False)
+        if denied:
+            return denied
+        report, error = run(ops.bootstrap, dry_run)
+        if error:
+            return render("_error.html", request, info, text=error)
+        audit("web.bootstrap_apply", info, {"dry_run": dry_run})
+        return render("_bootstrap_result.html", request, info, report=report, dry_run=dry_run)

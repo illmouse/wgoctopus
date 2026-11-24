@@ -86,7 +86,7 @@ Egress (secondary IP, policy routing) stays an optional step driven by node fiel
 
 ## Stages
 
-7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log: done; 7.4c instances + peers: done; 7.4d failover + requests + bootstrap); k3s manifests and backups.
+7.1 bootstrap YAML (schema, loader, API, tests); 7.2 SSH provisioning + e2e on the test host; 7.3 web authentication (7.3 done); 7.4 web UI pages in chunks (7.4a skeleton: done; 7.4b nodes + provisioning with live log: done; 7.4c instances + peers: done; 7.4d failover + requests + bootstrap: done); k3s manifests and backups.
 
 ## UI skeleton (7.4a)
 
@@ -124,3 +124,10 @@ Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bo
 - `GET /ui/peers/{id}/config` (operator): the explicit client-config download, `text/plain` attachment, `no-store`, recorded as `peer.config_issued` with `{"by": username}`.
 - The handlers call the same functions as `/v1` (`add_peer_op`, `peer_enabled_op`, `peer_remove_op`, `peer_config_op`, `switch_op` in `api.py`), so validation and reconciler kicks are identical.
 - Not in the UI yet: creating or editing instances and placements (use the bootstrap YAML or `/v1`); admin-only, planned later.
+
+## Failover, requests and bootstrap pages (7.4d)
+
+- `GET /ui/failover` (viewer): failover settings, pending proposals (instance, hop, from/to node, reason, expiry; refreshed every 10 s by `GET /ui/fragments/failover`) and a paginated history (`?state=`, `?offset=`, 50 per page). Operators get Confirm/Reject: `POST /ui/failovers/{id}/confirm|reject` (CSRF). The decision is recorded with `decided_by = "web"` and `actor = <username>` in the `failover.executed`/`failover.rejected` event, plus a `web.failover_confirm|reject` audit event. Engine errors (`expired`, `stale`, `no_candidate`, `not_pending`, `disabled`) are shown inline.
+- `GET /ui/requests` (viewer, `?status=pending|approved|declined|all`, default pending, paginated): access and device-limit requests from the bot. Approving or declining creates or changes users, so `POST /ui/requests/{id}/approve` (form field `default_limit`, default 3, `-1` unlimited; ignored for limit requests) and `POST /ui/requests/{id}/decline` are admin-only (`web.request_approve|decline`). Web admins have no Telegram identity, so `admin_id`/`admin_username` stay empty on the request row and the decision is attributed in the audit event. The bot's original Telegram notification messages are not edited.
+- `GET /ui/bootstrap` (viewer): whether a file is configured (base name only), apply-on-start flag and the last apply summary. Admins can run `POST /ui/bootstrap/apply?dry_run=true|false`; it always applies the configured file (the UI never accepts a document) and renders names of created/updated/unchanged/pruned objects, never values. Validation errors list the offending paths. Audited as `web.bootstrap_apply`.
+- The failover, approve/decline and bootstrap operations are shared with `/v1` (`failover_op`, `approve_request`/`decline_request`, `bootstrap_run` in `api.py`).

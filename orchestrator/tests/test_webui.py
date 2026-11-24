@@ -1,15 +1,20 @@
 import asyncio
 import time
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from test_api_provision import swap
 from test_api_web_auth import BEARER, PW, build, login
+from test_bootstrap import DOC
 from test_provision_steps import FakeHost
 
-from wgoctopus_orch import service, webauth, webui
-from wgoctopus_orch.models import Event
+from wgoctopus_orch import service, service_users, webauth, webui
+from wgoctopus_orch.failover import FailoverError
+from wgoctopus_orch.models import Event, FailoverProposal, Instance, UserRequest
 from wgoctopus_orch.provision import Step
 
 OIDC_ENV = {
@@ -395,3 +400,268 @@ def test_viewer_cannot_mutate_peers_or_switch(ui):
                 f"/ui/instances/{instance['id']}/switch?node_id={node_b['id']}"):
         assert client.post(url, headers=headers).status_code == 403
     assert client.get(f"/v1/peers/{pid}", headers=BEARER).json()["enabled"] is True
+
+
+# failover, requests and bootstrap pages (7.4d)
+class StubFailover:
+    KEYS = ("id", "instance_id", "hop_id", "from_node_id", "to_node_id", "state", "mode_at_creation", "reason",
+            "created_at", "expires_at", "decided_at", "decided_by", "error")
+
+    def __init__(self):
+        self.calls, self.error = [], None
+
+    def _decide(self, action, ident, by, actor):
+        self.calls.append((action, ident, by, actor))
+        if self.error:
+            raise FailoverError(self.error)
+        return SimpleNamespace(**dict.fromkeys(self.KEYS))
+
+    def confirm(self, ident, *, by, actor=None):
+        return self._decide("confirm", ident, by, actor)
+
+    def reject(self, ident, *, by, actor=None):
+        return self._decide("reject", ident, by, actor)
+
+
+def add_proposal(sessions, instance, hop, source, target, state="pending", reason="probe_down"):
+    now = datetime.now(UTC)
+    with sessions.begin() as s:
+        row = FailoverProposal(instance_id=instance["id"], hop_id=hop["id"], from_node_id=source["id"], to_node_id=target["id"],
+                               state=state, mode_at_creation="confirm", reason=reason, created_at=now, expires_at=now + timedelta(hours=1))
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def failover_fixture(client, sessions):
+    instance, node_a, node_b = make_instance(client)
+    hop = add_node(client, "hop-1")
+    return instance, hop, node_a, node_b
+
+
+def test_failover_page_roles_and_history(ui, monkeypatch):
+    client, sessions = ui
+    instance, hop, node_a, node_b = failover_fixture(client, sessions)
+    pending = add_proposal(sessions, instance, hop, node_a, node_b, reason="<b>probe</b>")
+    add_proposal(sessions, instance, hop, node_a, node_b, state="executed")
+    add_proposal(sessions, instance, hop, node_a, node_b, state="failed")
+    assert client.get("/ui/failover").status_code == 303
+    assert client.get("/ui/fragments/failover").status_code == 401
+    login(client, "view")
+    page = client.get("/ui/failover")
+    assert page.status_code == 200 and "Pending proposals" in page.text and "wg0-a" in page.text and "hop-1" in page.text
+    assert "evaluator not running" not in page.text and "confirm" in page.text
+    client.app.state.failover = None
+    assert "evaluator not running" in client.get("/ui/failover").text
+    assert "&lt;b&gt;probe&lt;/b&gt;" in page.text and "<b>probe</b>" not in page.text
+    assert "hx-post" not in page.text.replace('hx-post="/auth', "") and f"/ui/failovers/{pending}/confirm" not in page.text
+    only = client.get("/ui/failover?state=executed")
+    assert "History (1)" in only.text and "executed" in only.text
+    assert "History (3)" in client.get("/ui/failover?state=bogus").text
+    monkeypatch.setattr(webui, "LIST_PAGE", 1)
+    first = client.get("/ui/failover")
+    assert "Older" in first.text and "Newer" not in first.text
+    second = client.get("/ui/failover?offset=1")
+    assert "Newer" in second.text and "Older" in second.text
+    assert "Newer" not in client.get("/ui/failover?offset=-4").text
+    client.cookies.clear()
+    login(client, "ops")
+    assert f"/ui/failovers/{pending}/confirm" in client.get("/ui/failover").text
+    fragment = client.get("/ui/fragments/failover")
+    assert fragment.status_code == 200 and "<html" not in fragment.text and f"/ui/failovers/{pending}/reject" in fragment.text
+
+
+def test_failover_empty_state(ui):
+    client, _ = ui
+    login(client)
+    page = client.get("/ui/failover")
+    assert "No pending proposals" in page.text and "No proposals" in page.text
+
+
+def test_operator_confirms_and_rejects_failover(ui):
+    client, sessions = ui
+    instance, hop, node_a, node_b = failover_fixture(client, sessions)
+    proposal = add_proposal(sessions, instance, hop, node_a, node_b)
+    stub = client.app.state.failover = StubFailover()
+    url = f"/ui/failovers/{proposal}"
+    assert client.post(f"{url}/confirm").status_code == 401
+    login(client, "view")
+    headers = csrf_of(client)
+    assert client.post(f"{url}/confirm", headers=headers).status_code == 403
+    client.cookies.clear()
+    login(client, "ops")
+    assert client.post(f"{url}/confirm").status_code == 403  # no CSRF
+    headers = csrf_of(client)
+    ok = client.post(f"{url}/confirm", headers=headers)
+    assert ok.status_code == 204 and ok.headers["hx-refresh"] == "true"
+    assert client.post(f"{url}/reject", headers=headers).status_code == 204
+    assert stub.calls == [("confirm", proposal, "web", "ops"), ("reject", proposal, "web", "ops")]
+    stub.error = "stale"
+    assert "stale" in client.post(f"{url}/confirm", headers=headers).text
+    stub.error = "not_found"
+    assert "not_found" in client.post("/ui/failovers/999/reject", headers=headers).text
+    client.app.state.failover = None
+    assert "disabled" in client.post(f"{url}/confirm", headers=headers).text
+    with sessions() as s:
+        events = s.scalars(select(Event).where(Event.kind.like("web.failover_%")).order_by(Event.id)).all()
+    assert [(e.kind, e.subject, e.data) for e in events] == [("web.failover_confirm", "ops", {"proposal_id": proposal}), ("web.failover_reject", "ops", {"proposal_id": proposal})]
+
+
+def make_requests(sessions):
+    with sessions() as s:
+        access = service_users.create_request(s, "access", 1001, "@Newbie", "New", "Bie").id
+        other = service_users.create_request(s, "access", 1002, "second", None, None).id
+    with sessions() as s:
+        service_users.approve_request(s, other, 5, "root")
+        service_users.create_request(s, "limit", 1002, "second", None, None, 7)
+        limit = service_users.list_requests(s, "pending", "limit")[0].id
+    return access, limit
+
+
+def test_requests_page_filters_and_roles(ui, monkeypatch):
+    client, sessions = ui
+    _access, limit = make_requests(sessions)
+    assert client.get("/ui/requests").status_code == 303
+    login(client, "view")
+    page = client.get("/ui/requests")
+    assert page.status_code == 200 and "Requests (2)" in page.text and "newbie" in page.text and "device limit 3 &rarr; 7" in page.text
+    assert "Approve" not in page.text and "approved" not in page.text.split("<tbody>")[1]
+    assert "Requests (3)" in client.get("/ui/requests?status=all").text and "Requests (3)" in client.get("/ui/requests?status=bogus").text
+    assert "Requests (1)" in client.get("/ui/requests?status=approved").text
+    client.cookies.clear()
+    login(client, "ops")
+    assert "Approve" not in client.get("/ui/requests").text
+    client.cookies.clear()
+    login(client)
+    admin_page = client.get("/ui/requests")
+    assert f"/ui/requests/{limit}/approve" in admin_page.text and 'name="default_limit"' in admin_page.text
+    monkeypatch.setattr(webui, "LIST_PAGE", 1)
+    assert "Older" in client.get("/ui/requests").text and "Newer" not in client.get("/ui/requests").text
+    second = client.get("/ui/requests?offset=1")
+    assert "Newer" in second.text and "Older" not in second.text
+    assert "Newer" not in client.get("/ui/requests?offset=-3").text
+
+
+def test_empty_requests(ui):
+    client, _ = ui
+    login(client)
+    assert "No requests" in client.get("/ui/requests").text
+
+
+def test_admin_decides_requests(ui):
+    client, sessions = ui
+    access, limit = make_requests(sessions)
+    login(client, "ops")
+    headers = csrf_of(client)
+    assert client.post(f"/ui/requests/{access}/approve", content="default_limit=2", headers=headers).status_code == 403
+    assert client.post(f"/ui/requests/{access}/decline", headers=headers).status_code == 403
+    client.cookies.clear()
+    login(client)
+    assert client.post(f"/ui/requests/{access}/approve", content="default_limit=2").status_code == 403  # no CSRF
+    headers = csrf_of(client)
+    assert "number" in client.post(f"/ui/requests/{access}/approve", content="default_limit=abc", headers=headers).text
+    assert "number" in client.post(f"/ui/requests/{access}/approve", content="default_limit=-5", headers=headers).text
+    ok = client.post(f"/ui/requests/{access}/approve", content="default_limit=2", headers=headers)
+    assert ok.status_code == 204 and ok.headers["hx-refresh"] == "true"
+    with sessions() as s:
+        user = service_users.get_user(s, "newbie")
+        assert user.config_limit == 2 and user.tg_id == 1001
+        row = s.get(UserRequest, access)
+        assert row.status == "approved" and row.admin_id is None
+    assert "already processed" in client.post(f"/ui/requests/{access}/approve", headers=headers).text
+    assert client.post(f"/ui/requests/{limit}/approve", headers=headers).status_code == 204  # default limit field is optional
+    with sessions() as s:
+        assert service_users.get_user(s, "second").config_limit == 7
+    declined = add_declinable(sessions)
+    assert client.post(f"/ui/requests/{declined}/decline", headers=headers).status_code == 204
+    assert "already processed" in client.post(f"/ui/requests/{declined}/decline", headers=headers).text
+    assert "not found" in client.post("/ui/requests/999/decline", headers=headers).text
+    with sessions() as s:
+        assert s.get(UserRequest, declined).status == "declined"
+        events = s.scalars(select(Event).where(Event.kind.like("web.request_%")).order_by(Event.id)).all()
+    assert [(e.kind, e.subject, e.data) for e in events] == [
+        ("web.request_approve", "admin", {"request_id": access, "default_limit": 2}),
+        ("web.request_approve", "admin", {"request_id": limit, "default_limit": 3}),
+        ("web.request_decline", "admin", {"request_id": declined})]
+
+
+def add_declinable(sessions):
+    with sessions() as s:
+        return service_users.create_request(s, "access", 2002, "third", None, None).id
+
+
+def boot_client(tmp_path, crypto, monkeypatch, document=None, apply="false"):
+    monkeypatch.setenv("BOOT_TEST_TOKEN", "super-secret-token")
+    env = {}
+    if document is not None:
+        path = tmp_path / "boot.yaml"
+        path.write_text(yaml.safe_dump(document))
+        env = {"WGOCTOPUS_BOOTSTRAP_FILE": str(path), "WGOCTOPUS_BOOTSTRAP_APPLY": apply}
+    app, sessions, engine = build(tmp_path, crypto, monkeypatch, **env)
+    with sessions.begin() as s:
+        webauth.create_account(s, "admin", PW, "admin")
+        webauth.create_account(s, "ops", PW, "operator")
+        webauth.create_account(s, "view", PW, "viewer")
+    return app, sessions, engine
+
+
+def test_bootstrap_page_unconfigured(tmp_path, crypto, monkeypatch):
+    app, _, engine = boot_client(tmp_path, crypto, monkeypatch)
+    with TestClient(app, follow_redirects=False) as client:
+        assert client.get("/ui/bootstrap").status_code == 303
+        login(client)
+        page = client.get("/ui/bootstrap")
+        assert page.status_code == 200 and "not configured" in page.text and "none since start" in page.text
+        assert "Dry run" not in page.text
+        assert "not configured" in client.post("/ui/bootstrap/apply", headers=csrf_of(client)).text
+    engine.dispose()
+
+
+def test_bootstrap_dry_run_and_apply_from_ui(tmp_path, crypto, monkeypatch):
+    app, sessions, engine = boot_client(tmp_path, crypto, monkeypatch, DOC)
+    with TestClient(app, follow_redirects=False) as client:
+        login(client, "view")
+        viewer_page = client.get("/ui/bootstrap")
+        assert "boot.yaml" in viewer_page.text and str(tmp_path) not in viewer_page.text and "Dry run" not in viewer_page.text
+        assert client.post("/ui/bootstrap/apply", headers=csrf_of(client)).status_code == 403
+        client.cookies.clear()
+        login(client, "ops")
+        assert client.post("/ui/bootstrap/apply", headers=csrf_of(client)).status_code == 403
+        client.cookies.clear()
+        login(client)
+        page = client.get("/ui/bootstrap")
+        assert "Dry run" in page.text and "Apply on start" in page.text
+        assert client.post("/ui/bootstrap/apply").status_code == 403  # no CSRF
+        headers = csrf_of(client)
+        dry = client.post("/ui/bootstrap/apply", headers=headers)
+        assert dry.status_code == 200 and "Dry run" in dry.text and "awg-main" in dry.text and "node-1" in dry.text
+        assert "super-secret-token" not in dry.text
+        assert "none since start" in client.get("/ui/bootstrap").text
+        with sessions() as s:
+            assert s.scalar(select(func.count()).select_from(Instance)) == 0
+        applied = client.post("/ui/bootstrap/apply?dry_run=false", headers=headers)
+        assert applied.status_code == 200 and "Applied" in applied.text and "awg-main" in applied.text
+        with sessions() as s:
+            assert s.scalar(select(func.count()).select_from(Instance)) == 1
+        assert client.get("/v1/bootstrap", headers=BEARER).json()["last_apply"]["ok"] is True
+        assert "none since start" not in client.get("/ui/bootstrap").text and "created" in client.get("/ui/bootstrap").text
+        again = client.post("/ui/bootstrap/apply?dry_run=false", headers=headers)
+        assert "unchanged" in again.text
+        with sessions() as s:
+            events = s.scalars(select(Event).where(Event.kind == "web.bootstrap_apply").order_by(Event.id)).all()
+        assert [e.data for e in events] == [{"dry_run": True}, {"dry_run": False}, {"dry_run": False}]
+    engine.dispose()
+
+
+def test_bootstrap_ui_reports_invalid_and_missing_file(tmp_path, crypto, monkeypatch):
+    app, _, engine = boot_client(tmp_path, crypto, monkeypatch, DOC)
+    with TestClient(app, follow_redirects=False) as client:
+        login(client)
+        headers = csrf_of(client)
+        path = tmp_path / "boot.yaml"
+        path.write_text(yaml.safe_dump({"version": 1, "nodes": [{"name": "BAD NAME"}]}))
+        bad = client.post("/ui/bootstrap/apply", headers=headers)
+        assert bad.status_code == 200 and 'role="alert"' in bad.text and "/nodes" in bad.text
+        path.unlink()
+        assert "not readable" in client.post("/ui/bootstrap/apply", headers=headers).text
+    engine.dispose()

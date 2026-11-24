@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Requests - wgoctopus{% endblock %}
+{% block body %}
+<h1>Requests ({{ total }})</h1>
+<p class="pager">
+  <a href="/ui/requests?status=all">all</a>
+  {% for st in states %}<a href="/ui/requests?status={{ st }}"{% if st == status %} class="active"{% endif %}>{{ st }}</a>{% endfor %}
+</p>
+<div id="request-result"></div>
+<table>
+  <thead><tr><th>#</th><th>Type</th><th>Requester</th><th>Request</th><th>Status</th><th>Requested</th><th>Decided</th><th></th></tr></thead>
+  <tbody>
+  {% for r in requests %}
+  <tr>
+    <td>{{ r.id }}</td><td>{{ r.type }}</td>
+    <td>{{ r.username or "-" }} <span class="muted">(tg {{ r.tg_id }}{% if r.first_name or r.last_name %}, {{ r.first_name or "" }} {{ r.last_name or "" }}{% endif %})</span></td>
+    <td>{% if r.type == "limit" %}device limit {{ r.previous_limit }} &rarr; {{ r.requested_limit }}{% else %}access{% endif %}</td>
+    <td><span class="badge {{ state_class.get(r.status, 'warn') if r.status != 'pending' else 'warn' }}">{{ r.status }}</span></td>
+    <td>{{ r.requested_at|ts }}</td><td>{{ r.decided_at|ts }}</td>
+    <td>
+      {% if can_decide and r.status == "pending" %}
+      <form class="inline" hx-post="/ui/requests/{{ r.id }}/approve" hx-target="#request-result" hx-confirm="Approve request {{ r.id }}?">
+        {% if r.type == "access" %}<input type="number" name="default_limit" value="3" min="-1" title="Device limit (-1 = unlimited)">{% endif %}
+        <button type="submit">Approve</button>
+        <button type="button" class="danger" hx-post="/ui/requests/{{ r.id }}/decline" hx-target="#request-result" hx-confirm="Decline request {{ r.id }}?">Decline</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">No requests</td></tr>{% endfor %}
+  </tbody>
+</table>
+<p class="pager">
+  {% if offset > 0 %}<a href="/ui/requests?status={{ status }}&amp;offset={{ [offset - page_size, 0]|max }}">&larr; Newer</a>{% endif %}
+  {% if offset + page_size < total %}<a href="/ui/requests?status={{ status }}&amp;offset={{ offset + page_size }}">Older &rarr;</a>{% endif %}
+</p>
+{% endblock %}

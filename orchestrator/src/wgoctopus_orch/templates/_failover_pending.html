@@ -1,0 +1,19 @@
+<div id="pending" hx-get="/ui/fragments/failover" hx-trigger="every 10s" hx-swap="outerHTML">
+<table>
+  <thead><tr><th>#</th><th>Instance</th><th>Hop</th><th>From</th><th>To</th><th>Reason</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+  {% for p in proposals %}
+  <tr>
+    <td>{{ p.id }}</td><td>{{ p.instance }}</td><td>{{ p.hop }}</td><td>{{ p.from_node }}</td><td>{{ p.to_node }}</td>
+    <td>{{ p.reason }}</td><td>{{ p.expires_at|ts }}</td>
+    <td>
+      {% if can_operate %}
+      <button type="button" hx-post="/ui/failovers/{{ p.id }}/confirm" hx-target="#failover-result" hx-confirm="Switch {{ p.instance }} from {{ p.from_node }} to {{ p.to_node }}?">Confirm</button>
+      <button type="button" class="danger" hx-post="/ui/failovers/{{ p.id }}/reject" hx-target="#failover-result" hx-confirm="Reject proposal {{ p.id }}?">Reject</button>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">No pending proposals</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>

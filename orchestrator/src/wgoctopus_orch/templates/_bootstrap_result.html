@@ -1,0 +1,17 @@
+<h2>{{ "Dry run" if dry_run else "Applied" }}</h2>
+{% for section in ("created", "updated", "unchanged", "pruned") %}
+<h3>{{ section }}</h3>
+{% if report[section] %}
+<table>
+  <tbody>
+  {% for kind, names in report[section].items() %}
+  <tr><th>{{ kind }}</th><td>{{ names|join(", ") }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">nothing</p>{% endif %}
+{% endfor %}
+{% if report.warnings %}
+<h3>warnings</h3>
+<ul>{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+{% endif %}
