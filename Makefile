@@ -1,7 +1,7 @@
 .PHONY: help schema-check schema-validate ship agent-image orchestrator-image orch-image orch-smoke agent-build agent-test e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull orch-test orch-lint
 
 help:
-	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull HOST=.. orch-test orch-lint'
+	@printf '%s\n' 'Targets: help schema-check ship IMAGE=.. HOST=.. agent-build agent-test agent-image orchestrator-image e2e e2e-orch e2e-hop e2e-probe e2e-awg3 e2e-orch-hop e2e-orch-probe e2e-orch-failover e2e-orch-pull HOST=.. orch-test orch-lint bot-test bot-lint bot-image'
 
 e2e:
 	@./scripts/e2e.sh local
@@ -80,6 +80,15 @@ orch-smoke:
 
 orch-test:
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_orch --cov-report=term-missing --cov-fail-under=85 -q'
+
+bot-test:
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/bot python:3.12-slim sh -c 'pip install -q -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH pytest --cov=wgoctopus_bot --cov-report=term-missing --cov-fail-under=85 -q'
+
+bot-lint:
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/bot python:3.12-slim sh -c 'pip install -q -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH ruff check .'
+
+bot-image:
+	docker build -t wgoctopus-bot:dev -f bot/Dockerfile bot
 
 orch-lint:
 	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e PIP_CACHE_DIR=/tmp/pip -v "$(CURDIR):/work" -w /work/orchestrator python:3.12-slim sh -c 'pip install -e ".[dev]" && PATH=/tmp/.local/bin:$$PATH ruff check src tests migrations'

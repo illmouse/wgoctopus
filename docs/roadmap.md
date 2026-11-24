@@ -21,3 +21,5 @@ The data plane must remain independent of orchestrator availability. Back up the
 # Stage 3.5 — REST API and container
 
 REST API, in-process reconciler lifecycle, and container packaging are complete. Tests, coverage, lint, image, smoke, and repository hygiene gates pass.
+
+    - 6.1 Bot users/requests/devices API in orchestrator: done. 6.2 `import-users` of the old bot DB: done. 6.3a Bot module (`bot/`, ru/en, user flows: access/limit requests, own devices, config delivery): done; 6.3b admin screens (users, all devices, requests views) pending.
