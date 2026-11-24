@@ -40,6 +40,8 @@ The target is supplied at invocation time. SSH uses `~/.ssh/id_rsa` and `StrictH
 
 `make e2e-probe HOST=root@<test-host>` tests a client-mode peer handshake between two agents on one disposable host. It ships the image unless `E2E_SKIP_SHIP=1`; SSH options and protected container IDs can be set with `SSH_OPTS` and `E2E_PROTECTED_IDS`.
 
+`make e2e-awg3` (or `make e2e-awg3 HOST=root@<test-host>`) checks AWG 3.x fields against the real daemon, including live UAPI values, dangerous-change acknowledgement, persistence, and cleanup. SSH defaults and image shipping follow the other E2E scripts; set `E2E_SKIP_SHIP=1` to use the image already on the host. Use only a disposable test host.
+
 `make e2e-orch-probe HOST=root@<test-host>` validates the synthetic probe end to end through a real hop, including path break/restore and event transitions. It creates uniquely named test resources and removes them on exit; run only on a disposable test host.
 
 `make e2e-orch-failover HOST=root@<test-host>` validates failover with confirmation end to end: hop, active and standby backends, a runner with a probe, and the orchestrator in `confirm` mode. It stops the active backend, waits for probe DOWN and a pending proposal, checks that nothing switches without confirmation, confirms via API, and verifies the hop DNAT moves to the standby, the probe returns UP and no duplicate proposals appear. Cleanup is verified against the iptables baseline.
