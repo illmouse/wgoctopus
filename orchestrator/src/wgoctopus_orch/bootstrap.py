@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from . import service, service_users
 from .models import BootstrapManaged, BotUser, HopLink, Instance, Node, Placement
+from .provision import ProvisionError, validate_options
 
 
 class BootstrapError(ValueError):
@@ -33,7 +34,7 @@ class Report:
 
 SCHEMA = {
     "settings": {"prune"}, "instances": {"name", "listen_port", "address", "awg_version", "cps_profile", "intensity", "mtu", "egress_interface", "snat_ip", "endpoint_host", "client_dns", "client_keepalive", "client_allowed_ips"},
-    "nodes": {"name", "kind", "mgmt_mode", "ssh", "agent_port", "agent_token", "pull_public_key", "egress_interface", "snat_ip", "backend_ip", "wan_interface", "hop_ip", "enabled"},
+    "nodes": {"name", "kind", "mgmt_mode", "ssh", "agent_port", "agent_token", "pull_public_key", "egress_interface", "snat_ip", "backend_ip", "wan_interface", "hop_ip", "enabled", "protected", "provision"},
     "placements": {"instance", "node", "role", "weight"}, "hop_links": {"hop", "instance"},
     "users": {"username", "role", "config_limit"},
 }
@@ -78,6 +79,10 @@ def validate(document):
                     if isinstance(token, dict) and (set(token) not in ({"env"}, {"file"}) or not isinstance(next(iter(token.values()), None), str)): errors.append(p+"/agent_token")
                     if row.get("kind", "awg") not in {"awg", "hop"}: errors.append(p+"/kind")
                     if row.get("mgmt_mode", "push") not in {"push", "pull", "auto"}: errors.append(p+"/mgmt_mode")
+                    if "protected" in row and not isinstance(row["protected"], bool): errors.append(p+"/protected")
+                    if "provision" in row:
+                        try: validate_options(row["provision"])
+                        except ProvisionError: errors.append(p+"/provision")
                 if key == "instances":
                     if row.get("awg_version", "2.0") not in {"2.0", "3.0", "3.1"}: errors.append(p+"/awg_version")
                     if row.get("cps_profile") not in (None, "none", "quic_initial", "tls_client_hello", "dns_query", "wireguard_noise", "sip", "random"): errors.append(p+"/cps_profile")
@@ -135,7 +140,7 @@ def apply_bootstrap(session_factory, document, *, crypto, dry_run=False):
                                     if isinstance(params.get(key), list): params[key] = ", ".join(params[key])
                                 obj=service.create_instance(session,name,row["listen_port"],row["address"],crypto=crypto,**params)
                             elif kind == "nodes":
-                                ssh=row.get("ssh",{}); obj=service.create_node(session,name,ssh.get("host","-"),ssh.get("user","pull"),ssh_port=ssh.get("port",22),mgmt_mode=row.get("mgmt_mode","push"),agent_port=row.get("agent_port",18080),agent_token=_secret(row["agent_token"]) if row.get("agent_token") is not None else None,kind=row.get("kind","awg"),pull_public_key=row.get("pull_public_key"),egress_interface=row.get("egress_interface"),snat_ip=row.get("snat_ip"),backend_ip=row.get("backend_ip"),wan_interface=row.get("wan_interface"),hop_ip=row.get("hop_ip"),enabled=row.get("enabled",True),crypto=crypto)
+                                ssh=row.get("ssh",{}); obj=service.create_node(session,name,ssh.get("host","-"),ssh.get("user","pull"),ssh_port=ssh.get("port",22),mgmt_mode=row.get("mgmt_mode","push"),agent_port=row.get("agent_port",18080),agent_token=_secret(row["agent_token"]) if row.get("agent_token") is not None else None,kind=row.get("kind","awg"),pull_public_key=row.get("pull_public_key"),egress_interface=row.get("egress_interface"),snat_ip=row.get("snat_ip"),backend_ip=row.get("backend_ip"),wan_interface=row.get("wan_interface"),hop_ip=row.get("hop_ip"),enabled=row.get("enabled",True),protected=row.get("protected",False),provision_options=row.get("provision"),crypto=crypto)
                             else:
                                 obj=service_users.ensure_admin(session,name) if row.get("role","user")=="admin" else service_users.ensure_user(session,name,config_limit=row.get("config_limit",3))
                             report.created.setdefault(kind,[]).append(name)
@@ -153,6 +158,9 @@ def apply_bootstrap(session_factory, document, *, crypto, dry_run=False):
                                 if changed:
                                     for nid in session.scalars(select(Placement.node_id).where(Placement.instance_id==existing.id)): service.bump_revision(session,nid,crypto)
                                     service._bump_hops(session,existing.id,crypto)
+                            elif kind == "nodes":
+                                for key, attr in (("protected", "protected"), ("provision", "provision_options")):
+                                    if key in row and getattr(existing, attr) != row[key]: setattr(existing, attr, row[key]); changed=True
                             elif kind == "users":
                                 if "config_limit" in row and existing.config_limit != row["config_limit"]: existing.config_limit=row["config_limit"]; changed=True
                                 if "role" in row and existing.role != row["role"]: existing.role=row["role"]; changed=True

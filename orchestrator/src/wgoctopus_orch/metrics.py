@@ -16,6 +16,7 @@ from .models import (
     NodeRevision,
     Peer,
     Probe,
+    ProvisionJob,
 )
 from .reconciler import NodeState
 from .renderer import active_placement, probe_iface_name
@@ -65,6 +66,10 @@ def render_metrics(session: Session, reconciler=None, version="0.1.0", now=None,
     nodes = session.scalars(select(Node).order_by(Node.name)).all()
     family("wgoctopus_pull_server_enabled", "gauge", "Whether the pull SSH listener is enabled.")
     sample("wgoctopus_pull_server_enabled", {}, int(pull_server is not None))
+    family("wgoctopus_provision_jobs", "gauge", "Provisioning jobs by state.")
+    counts = dict(session.execute(select(ProvisionJob.state, func.count()).group_by(ProvisionJob.state)).all())
+    for state in ("queued", "running", "succeeded", "failed", "cancelled"):
+        sample("wgoctopus_provision_jobs", {"state": state}, counts.get(state, 0))
     family("wgoctopus_pull_tunnel_up", "gauge", "Whether a pull tunnel is connected.")
     for node in nodes:
         if node.mgmt_mode in ("pull", "auto"):

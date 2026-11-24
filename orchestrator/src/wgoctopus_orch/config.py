@@ -58,6 +58,7 @@ class Settings:
     pull_login_timeout: float = 20
     bootstrap_file: str | None = None
     bootstrap_apply: bool = True
+    agent_image: str = "ghcr.io/illmouse/wgoctopus-agent:latest"
 
     @property
     def telegram_buttons_enabled(self):
@@ -151,4 +152,5 @@ class Settings:
                       "pull_host_key_file": os.getenv("WGOCTOPUS_PULL_HOST_KEY_FILE"),
                       "pull_login_timeout": float(os.getenv("WGOCTOPUS_PULL_LOGIN_TIMEOUT", "20")),
                       "bootstrap_file": os.getenv("WGOCTOPUS_BOOTSTRAP_FILE") or None,
-                      "bootstrap_apply": bootstrap_apply == "true"})
+                      "bootstrap_apply": bootstrap_apply == "true",
+                      "agent_image": os.getenv("WGOCTOPUS_AGENT_IMAGE", "ghcr.io/illmouse/wgoctopus-agent:latest")})

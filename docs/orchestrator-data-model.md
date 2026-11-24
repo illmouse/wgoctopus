@@ -59,3 +59,8 @@ Instances may also store `endpoint_host`, comma-separated `client_dns`, `client_
 # AWG 3.x obfuscation
 
 AWG 3.x interfaces may include header protection, content padding, rekey/reject/keepalive timers, and maximum handshake attempts. AWG 3.1 may additionally enable random trailers. These values are carried in desired state and client configs. Rotating or changing these values (especially the header protection key and S values) is dangerous and may disconnect every client; coordinate updates and distribute the matching client config.
+# Provisioning jobs
+
+`provision_jobs` stores node-linked jobs (`queued`, `running`, `succeeded`, `failed`, `cancelled`), options, error, and lifecycle timestamps. `provision_steps` stores ordered per-job steps (`pending`, `running`, `ok`, `skipped`, `failed`) with logs and timestamps. Deleting a node cascades to its jobs, and deleting a job cascades to its steps.
+
+Nodes additionally carry `protected` (provisioning requires explicit confirmation) and `provision_options` (JSON; same keys as the job options, `auto` marks unattended provisioning).

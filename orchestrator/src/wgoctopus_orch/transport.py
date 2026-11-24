@@ -12,6 +12,40 @@ from .config import Settings
 from .crypto import Crypto
 
 
+def host_key_client(node, settings):
+    """Build the same strict-known-hosts/TOFU verifier for SSH clients."""
+    known_hosts = settings.ssh_known_hosts or str(Path.home() / ".ssh" / "known_hosts")
+    known_path = Path(known_hosts)
+    known_path.parent.mkdir(parents=True, exist_ok=True)
+    entry_host = node.ssh_host if node.ssh_port == 22 else f"[{node.ssh_host}]:{node.ssh_port}"
+    known = known_path.read_text() if known_path.exists() else ""
+
+    def validate(host, addr, port, key):
+        public_key = key.export_public_key().decode().strip()
+        matching = [line.split() for line in known.splitlines() if line.strip() and not line.lstrip().startswith("#")
+                    and entry_host in line.split()[0].split(",")]
+        if matching:
+            return any(len(fields) >= 3 and fields[1:] == public_key.split() for fields in matching)
+        if not settings.ssh_tofu:
+            return False
+        content = known + ("" if not known or known.endswith("\n") else "\n") + f"{entry_host} {public_key}\n"
+        fd, temp_name = tempfile.mkstemp(dir=known_path.parent)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as temp_file:
+                temp_file.write(content)
+            os.replace(temp_name, known_path)
+        finally:
+            if os.path.exists(temp_name):
+                os.unlink(temp_name)
+        return True
+
+    class HostKeyClient(asyncssh.SSHClient):
+        def validate_host_public_key(self, host, addr, port, key):
+            return validate(host, addr, port, key)
+    return HostKeyClient
+
+
 class AgentSession:
     def __init__(self, client):
         self._client = client
@@ -38,43 +72,10 @@ class SshTunnelTransport(AgentTransport):
         passphrase = None
         if settings.ssh_key_passphrase_file:
             passphrase = Path(settings.ssh_key_passphrase_file).read_text().strip()
-        known_hosts = settings.ssh_known_hosts or str(Path.home() / ".ssh" / "known_hosts")
-        known_path = Path(known_hosts)
-        known_path.parent.mkdir(parents=True, exist_ok=True)
-        entry_host = node.ssh_host if node.ssh_port == 22 else f"[{node.ssh_host}]:{node.ssh_port}"
-        known = known_path.read_text() if known_path.exists() else ""
-
-        def validate_host_public_key(host, addr, port, key):
-            public_key = key.export_public_key().decode().strip()
-            matching = [line.split() for line in known.splitlines()
-                        if line.strip() and not line.lstrip().startswith("#")
-                        and entry_host in line.split()[0].split(",")]
-            if matching:
-                return any(len(fields) >= 3 and fields[1:] == public_key.split()
-                           for fields in matching)
-            if not settings.ssh_tofu:
-                return False
-            content = known + ("" if not known or known.endswith("\n") else "\n")
-            content += f"{entry_host} {public_key}\n"
-            fd, temp_name = tempfile.mkstemp(dir=known_path.parent)
-            try:
-                os.fchmod(fd, 0o600)
-                with os.fdopen(fd, "w") as temp_file:
-                    temp_file.write(content)
-                os.replace(temp_name, known_path)
-            finally:
-                if os.path.exists(temp_name):
-                    os.unlink(temp_name)
-            return True
-
-        class HostKeyClient(asyncssh.SSHClient):
-            def validate_host_public_key(self, host, addr, port, key):
-                return validate_host_public_key(host, addr, port, key)
-
         conn = await asyncssh.connect(
             node.ssh_host, port=node.ssh_port, username=node.ssh_user,
             client_keys=[settings.ssh_key_file], passphrase=passphrase,
-            known_hosts=(), client_factory=HostKeyClient,
+            known_hosts=(), client_factory=host_key_client(node, settings),
             connect_timeout=settings.ssh_connect_timeout, keepalive_interval=30,
         )
         listener = None

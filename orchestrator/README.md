@@ -61,6 +61,7 @@ Install with `pip install .` and run `WGOCTOPUS_MASTER_KEY=<fernet-key> WGOCTOPU
 | `WGOCTOPUS_CLIENT_ENDPOINT_HOST` | unset | Default client config endpoint |
 | `WGOCTOPUS_BOOTSTRAP_FILE` | unset | Optional declarative YAML bootstrap file |
 | `WGOCTOPUS_BOOTSTRAP_APPLY` | true | Apply configured bootstrap file at startup |
+| `WGOCTOPUS_AGENT_IMAGE` | ghcr.io/illmouse/wgoctopus-agent:latest | Agent image used by host provisioning (overridable per job with `image`) |
 
 Set `WGOCTOPUS_MASTER_KEY` or `WGOCTOPUS_MASTER_KEY_FILE` and configure DB/transport using the existing settings. `mgmt_mode=pull` is accepted for compatibility but is not implemented by the reconciler.
 

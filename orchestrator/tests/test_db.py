@@ -45,7 +45,8 @@ def test_migrations_are_idempotent_and_preserve_existing_rows(tmp_path):
     upgrade_to_head(url)
     with engine.connect() as connection:
         assert connection.execute(text("SELECT kind FROM events")).scalar_one() == "kept"
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009_bootstrap_managed"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0011_node_provisioning"
+        assert {row[1] for row in connection.execute(text("PRAGMA table_info(provision_jobs)"))} >= {"node_id", "state", "options"}
         columns = {row[1] for row in connection.execute(text("PRAGMA table_info(instances)"))}
         assert {"endpoint_host", "client_dns", "client_keepalive", "client_allowed_ips"} <= columns
     engine.dispose()

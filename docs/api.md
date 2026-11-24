@@ -6,6 +6,7 @@ The single-process FastAPI service is mounted under `/v1`. Supply `Authorization
 |---|---|
 | POST/GET `/v1/instances`; GET/PATCH/DELETE `/v1/instances/{id}` | Instance lifecycle; patch allows mtu, egress_interface, snat_ip only |
 | GET `/v1/bootstrap`; POST `/v1/bootstrap/apply` | Bootstrap status and admin-authenticated transactional apply (`{"dry_run":true}` or inline `{"document":{...}}`); validation errors return JSON-pointer paths. |
+| POST `/v1/nodes/{id}/provision`; GET `/v1/provision/jobs[?node_id=]`, `/v1/provision/jobs/{id}`; POST `/v1/provision/jobs/{id}/cancel` | Host provisioning over SSH, see below. |
 
 `POST /v1/instances` accepts optional `cps_profile` (`none`, `quic_initial`, `tls_client_hello`, `dns_query`, `wireguard_noise`, `sip`, or `random`) and `intensity` (`low`, `medium`, or `high`, default `medium`). CPS is generated only when `obfuscation` is omitted; explicit obfuscation takes precedence.
 It also accepts `awg_version` (`2.0`, `3.0`, or `3.1`, default `2.0`), used only when `obfuscation` is omitted. Instance responses redact `header_protection_key` and expose only `header_protection_key_set`; the shared key is returned only in `GET /v1/peers/{id}/config`.
@@ -76,6 +77,10 @@ curl -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
   -d '{"name":"wg-main","listen_port":51820,"address":"10.0.0.1/24"}' \
   http://localhost:8080/v1/instances
 ```
+
+## Host provisioning
+
+`POST /v1/nodes/{id}/provision` body `{"options": {...}, "confirm_protected": false}` starts a background job (202 `{job_id}`). Options are merged over the node's stored `provision` options (set via node create/PATCH or bootstrap `provision:`): `mgmt_user`, `image`, `image_archive` (path on the orchestrator, streamed to `docker load`), `force_image`, `pull_server`, `pull_host_key`, `health_attempts`, `health_interval`; `auto: true` (stored only) makes the orchestrator provision the node at start until one job succeeded. Unknown options or wrong types: 422. A node with `protected: true` needs `confirm_protected: true` (otherwise 409 `confirmation_required`); a second active job for a node returns 409 `conflict`. `GET /v1/provision/jobs/{id}` returns the job with its steps (`pending|running|ok|skipped|failed`) and redacted logs; secrets (agent token, keys) are never logged. Steps are idempotent: re-running a failed job's node is the resume mechanism. With `mgmt_user` the node's `ssh_user` is switched to that restricted user (key `restrict,port-forwarding,permitopen="127.0.0.1:<agent_port>"`) after success; in pull mode the generated node public key is stored on the node. Metric: `wgoctopus_provision_jobs{state}`.
 
 ## Probes
 

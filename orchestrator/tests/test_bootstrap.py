@@ -224,3 +224,26 @@ def test_validate_rejects_non_mapping_and_bad_yaml():
     with pytest.raises(BootstrapError):
         load_yaml("a: [unclosed")
     assert load_yaml("version: 1")["version"] == 1
+
+
+def test_bootstrap_node_protected_and_provision(session, crypto, monkeypatch):
+    from wgoctopus_orch.models import Node
+    monkeypatch.setenv("BOOT_TEST_TOKEN", "x")
+    sessions = sessionmaker(bind=session.get_bind())
+    doc = copy.deepcopy(DOC)
+    doc["nodes"][0]["protected"] = True
+    doc["nodes"][0]["provision"] = {"auto": True, "mgmt_user": "wgo"}
+    apply_bootstrap(sessions, doc, crypto=crypto)
+    session.expire_all()
+    node = session.scalar(select(Node).where(Node.name == doc["nodes"][0]["name"]))
+    assert node.protected is True and node.provision_options == {"auto": True, "mgmt_user": "wgo"}
+    doc["nodes"][0]["protected"] = False
+    report = apply_bootstrap(sessions, doc, crypto=crypto)
+    assert doc["nodes"][0]["name"] in report.updated["nodes"]
+    session.expire_all()
+    assert session.get(Node, node.id).protected is False
+    for bad in ({"protected": "yes"}, {"provision": {"nope": 1}}):
+        broken = copy.deepcopy(DOC)
+        broken["nodes"][0].update(bad)
+        with pytest.raises(BootstrapError):
+            apply_bootstrap(sessions, broken, crypto=crypto, dry_run=True)

@@ -42,6 +42,7 @@ from .models import (
     Probe,
     UserRequest,
 )
+from .provision import ProvisionError, ProvisionRunner, validate_options
 from .pull_server import PullServer
 from .reconciler import build_reconciler
 from .renderer import active_placement, probe_iface_name
@@ -131,6 +132,11 @@ class PlacementIn(Strict):
     weight: int = Field(default=1, ge=1)
 
 
+class ProvisionIn(Strict):
+    options: dict | None = None
+    confirm_protected: bool = False
+
+
 class NodeIn(Strict):
     name: str
     ssh_host: str | None = None
@@ -147,6 +153,8 @@ class NodeIn(Strict):
     wan_interface: str | None = None
     hop_ip: str | None = None
     backend_ip: str | None = None
+    protected: bool = False
+    provision: dict | None = None
 
     @field_validator("hop_ip", "backend_ip")
     @classmethod
@@ -197,6 +205,8 @@ class NodePatch(Strict):
     egress_interface: str | None = None
     snat_ip: str | None = None
     enabled: bool | None = None
+    protected: bool | None = None
+    provision: dict | None = None
     kind: str | None = Field(default=None, pattern="^(awg|hop)$")
     wan_interface: str | None = None
     hop_ip: str | None = None
@@ -249,7 +259,7 @@ class ProbeIn(Strict):
     runner_node_id: int
 
 
-def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None, pull_server=None):
+def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=None, alerts=None, notifier=None, failover=None, bot=None, pull_server=None, provision=None):
     engine = make_engine(database_url()) if session_factory is None else None
     sessions = session_factory or make_session_factory(engine)
     cipher = crypto or Crypto()
@@ -286,6 +296,13 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                     paths = exc.errors if isinstance(exc, bootstrap.BootstrapError) else ["/"]
                     log.error("Bootstrap failed at paths: %s", ", ".join(paths))
                     raise
+            app.state.provision = provision or ProvisionRunner(sessions, cipher, alert_settings)
+            try:
+                app.state.provision.recover_interrupted()
+                if enabled:
+                    app.state.provision.auto_provision()
+            except Exception as exc:
+                log.error("Provisioning startup failed (%s)", type(exc).__name__)
             if pull_server is not None:
                 app.state.pull_server = pull_server
             elif alert_settings.pull_listen:
@@ -356,6 +373,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 await alert_task
             if owned_pull_server:
                 await owned_pull_server.stop()
+            if app.state.provision is not None:
+                await app.state.provision.shutdown()
             if engine:
                 engine.dispose()
 
@@ -368,6 +387,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     app.state.alerts = alerts
     app.state.telegram_bot = bot
     app.state.pull_server = pull_server
+    app.state.provision = provision
     app.state.bootstrap_last_apply = None
     token = _token()
     allow_no_auth = os.getenv("WGOCTOPUS_API_ALLOW_NO_AUTH", "false").lower() == "true"
@@ -518,6 +538,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         status=(app.state.reconciler.status().get(n.id) if app.state.reconciler else None)
         return dict(id=n.id,name=n.name,ssh_host=n.ssh_host,ssh_port=n.ssh_port,ssh_user=n.ssh_user,
                     mgmt_mode=n.mgmt_mode,agent_port=n.agent_port,egress_interface=n.egress_interface,snat_ip=n.snat_ip,
+                    protected=n.protected, provision=n.provision_options,
                     pull_public_key=n.pull_public_key, pull_connected=bool(app.state.pull_server and app.state.pull_server.is_connected(n.id)),
                     enabled=n.enabled,kind=n.kind,wan_interface=n.wan_interface,hop_ip=n.hop_ip,backend_ip=n.backend_ip,
                     desired_revision=rev.desired_revision if rev else None,
@@ -631,9 +652,48 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         service._bump_hops(s,instance_id,cipher)
         kick(s,[node_id]); return Response(status_code=204)
 
+    def valid_options(options):
+        try:
+            return validate_options(options)
+        except ProvisionError as exc:
+            raise HTTPException(422, {"error": "validation_error", "detail": str(exc)}) from None
+
+    def job_or_404(ident):
+        view = app.state.provision.job_view(ident)
+        if view is None: raise HTTPException(404, "unknown job")
+        return view
+
+    @app.post("/v1/nodes/{ident}/provision",dependencies=[Depends(auth)],status_code=202)
+    async def start_provision(ident:int,body:ProvisionIn=Body(default=ProvisionIn()),s:Session=Depends(db)):
+        n=s.get(Node,ident)
+        if not n: raise HTTPException(404,"unknown node")
+        options={**(n.provision_options or {}),**valid_options(body.options)}
+        options.pop("auto",None)
+        try:
+            job_id=app.state.provision.create_job(ident,options,confirm_protected=body.confirm_protected)
+        except ProvisionError as exc:
+            message=str(exc)
+            code="confirmation_required" if "confirmation" in message else "conflict"
+            raise HTTPException(409,{"error":code,"detail":message}) from None
+        app.state.provision.run_in_background(job_id)
+        return {"job_id":job_id}
+
+    @app.get("/v1/provision/jobs",dependencies=[Depends(auth)])
+    def list_provision_jobs(node_id:int|None=None,limit:int=Query(default=50,ge=1,le=500)):
+        return app.state.provision.list_jobs(node_id,limit)
+
+    @app.get("/v1/provision/jobs/{ident}",dependencies=[Depends(auth)])
+    def get_provision_job(ident:int): return job_or_404(ident)
+
+    @app.post("/v1/provision/jobs/{ident}/cancel",dependencies=[Depends(auth)],status_code=202)
+    def cancel_provision_job(ident:int):
+        job_or_404(ident)
+        if not app.state.provision.cancel(ident): raise HTTPException(409,{"error":"not_running","detail":"job is not running"})
+        return {"cancelled":True}
+
     @app.post("/v1/nodes",dependencies=[Depends(auth)],status_code=201)
     def create_node(body:NodeIn,s:Session=Depends(db)):
-        n=service.create_node(s,body.name,body.ssh_host or "-",body.ssh_user or "pull",ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,pull_public_key=body.pull_public_key,crypto=cipher)
+        n=service.create_node(s,body.name,body.ssh_host or "-",body.ssh_user or "pull",ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,pull_public_key=body.pull_public_key,protected=body.protected,provision_options=valid_options(body.provision) if body.provision is not None else None,crypto=cipher)
         return node(n,s)
 
     @app.get("/v1/nodes",dependencies=[Depends(auth)])
@@ -664,6 +724,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         for k,v in body.items():
             if k == "agent_token":
                 n.agent_token_enc = cipher.encrypt(v)
+            elif k == "provision":
+                n.provision_options = valid_options(v) if v is not None else None
             else:
                 setattr(n, k, v)
         hop_ids = []

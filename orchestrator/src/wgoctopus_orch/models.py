@@ -58,6 +58,8 @@ class Node(Base):
     agent_port: Mapped[int] = mapped_column(Integer, default=18080, nullable=False)
     agent_token_enc: Mapped[str] = mapped_column(Text, nullable=False)
     pull_public_key: Mapped[str | None] = mapped_column(Text)
+    protected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+    provision_options: Mapped[dict | None] = mapped_column(JSON)
     egress_interface: Mapped[str | None] = mapped_column(String(15))
     snat_ip: Mapped[str | None] = mapped_column(String)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -206,3 +208,28 @@ class BootstrapManaged(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ProvisionJob(Base):
+    __tablename__ = "provision_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    options: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProvisionStep(Base):
+    __tablename__ = "provision_steps"
+    __table_args__ = (UniqueConstraint("job_id", "seq"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("provision_jobs.id", ondelete="CASCADE"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    log: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

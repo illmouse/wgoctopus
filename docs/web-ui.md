@@ -62,7 +62,7 @@ users:                      # bot users
   - {username: alice, role: admin}
 ```
 
-Rules: strict schema validation runs before writes; re-applying unchanged data is a no-op; imported private keys are only accepted through the offline import CLI. SSH key and host provisioning fields arrive in stage 7.2.
+Rules: strict schema validation runs before writes; re-applying unchanged data is a no-op; imported private keys are only accepted through the offline import CLI. Node entries also accept `protected: true` and `provision: {...}` (options listed in api.md, `auto: true` provisions the node at start). The SSH key used by the orchestrator is global (`WGOCTOPUS_SSH_KEY_FILE`, host keys via known_hosts or `WGOCTOPUS_SSH_TOFU`); the agent image comes from `WGOCTOPUS_AGENT_IMAGE` or the `image`/`image_archive` options.
 
 ## Host provisioning over SSH
 
