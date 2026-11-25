@@ -176,6 +176,23 @@ def test_first_admin_from_env(tmp_path, crypto, monkeypatch):
     engine.dispose()
 
 
+def test_first_admin_created_after_automatic_migration(tmp_path, crypto, monkeypatch):
+    url = f"sqlite:///{tmp_path / 'fresh.db'}"
+    monkeypatch.setenv("WGOCTOPUS_API_TOKEN", "test-admin-token")
+    monkeypatch.setenv("WGOCTOPUS_DATABASE_URL", url)
+    monkeypatch.setenv("WGOCTOPUS_AUTO_MIGRATE", "true")
+    monkeypatch.setenv("WGOCTOPUS_WEB_ADMIN_USERNAME", "fresh-admin")
+    monkeypatch.setenv("WGOCTOPUS_WEB_ADMIN_PASSWORD", PW)
+    engine = make_engine(url)
+    sessions = make_session_factory(engine)
+    app = create_app(session_factory=sessions, crypto=crypto)
+
+    with TestClient(app) as client:
+        assert login(client, "fresh-admin", PW).status_code == 200
+
+    engine.dispose()
+
+
 def test_no_first_admin_without_password(tmp_path, crypto, monkeypatch):
     app, sessions, engine = build(tmp_path, crypto, monkeypatch)
     with TestClient(app):

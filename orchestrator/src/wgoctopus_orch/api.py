@@ -329,6 +329,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 except Exception:
                     log.exception("Database migration failed")
                     raise
+            if alert_settings.web_enabled and alert_settings.web_admin_password:
+                with sessions.begin() as session:
+                    if session.scalar(select(WebAccount.id).limit(1)) is None:
+                        webauth.create_account(session, alert_settings.web_admin_username, alert_settings.web_admin_password, "admin")
             app.state.bootstrap_last_apply = None
             if alert_settings.bootstrap_file and alert_settings.bootstrap_apply:
                 try:
@@ -479,11 +483,6 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         def account_json(a):
             return {"username": a.username, "role": a.role, "source": a.source, "enabled": a.enabled,
                     "created_at": a.created_at, "last_login_at": a.last_login_at}
-
-        if alert_settings.web_admin_password:
-            with sessions.begin() as session:
-                if session.scalar(select(WebAccount.id).limit(1)) is None:
-                    webauth.create_account(session, alert_settings.web_admin_username, alert_settings.web_admin_password, "admin")
 
         @app.post("/auth/login")
         def web_login(body: dict, request: Request, response: Response, s: Session = Depends(db)):
