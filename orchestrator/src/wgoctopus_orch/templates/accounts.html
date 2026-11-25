@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Accounts - wgoctopus{% endblock %}
+{% block body %}<h1>Web accounts</h1>
+{% if editable %}<form method="post" action="/ui/accounts/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+<label>Username <input name="username" required maxlength="64"></label><label>Temporary password <input type="password" name="password" required minlength="12"></label>
+<label>Role <select name="role"><option>viewer</option><option>operator</option><option>admin</option></select></label><button>Create account</button></form>{% endif %}
+<table><thead><tr><th>Username</th><th>Role</th><th>Source</th><th>Enabled</th>{% if editable %}<th>Actions</th>{% endif %}</tr></thead><tbody>
+{% for a in accounts %}<tr><td>{{ a.username }}</td><td>{{ a.role }}</td><td>{{ a.source }}</td><td>{{ a.enabled }}</td>{% if editable %}<td><form method="post" action="/ui/accounts/{{ a.id }}/update"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><select name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select><label><input type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}> Enabled</label><button>Save</button></form>
+{% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><label>New password <input type="password" name="password" required minlength="12"></label><button>Reset password</button></form>{% endif %}
+<form method="post" action="/ui/accounts/{{ a.id }}/delete"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Delete</button></form></td>{% endif %}</tr>{% endfor %}
+</tbody></table>{% endblock %}

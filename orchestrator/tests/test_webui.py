@@ -14,7 +14,19 @@ from test_provision_steps import FakeHost
 
 from wgoctopus_orch import service, service_users, webauth, webui
 from wgoctopus_orch.failover import FailoverError
-from wgoctopus_orch.models import Event, FailoverProposal, Instance, Node, UserRequest
+from wgoctopus_orch.models import (
+    BotUser,
+    Event,
+    FailoverProposal,
+    FailoverSettings,
+    HopLink,
+    Instance,
+    Node,
+    Peer,
+    Probe,
+    UserRequest,
+    WebAccount,
+)
 from wgoctopus_orch.provision import Step
 
 OIDC_ENV = {
@@ -126,6 +138,107 @@ def test_ui_absent_when_web_disabled(tmp_path, crypto, monkeypatch):
         for path in ("/", "/login", "/ui/", "/static/app.js"):
             assert client.get(path).status_code == 404
     engine.dispose()
+
+
+def test_management_pages_role_access_and_csrf(ui):
+    client, _ = ui
+    paths = ("/ui/users", "/ui/accounts", "/ui/devices")
+    for path in paths:
+        assert client.get(path).status_code == 303
+    for username in ("view", "ops"):
+        client.cookies.clear()
+        login(client, username)
+        expected = [403, 403, 403] if username == "view" else [200, 200, 200]
+        assert [client.get(path).status_code for path in paths] == expected
+        assert client.post("/ui/users/create", data={"username": "blocked"}).status_code == 403
+    client.cookies.clear()
+    login(client)
+    assert all(client.get(path).status_code == 200 for path in paths)
+    assert client.post("/ui/users/create", data={"username": "blocked"}).status_code == 403
+    assert client.post("/ui/accounts/create", data={"username": "blocked"}).status_code == 403
+    assert client.post("/ui/devices/create", data={"owner": "blocked"}).status_code == 403
+
+
+def test_user_admin_creation_requires_telegram_id(ui):
+    client, sessions = ui
+    login(client)
+    headers = csrf_of(client)
+    assert client.post("/ui/users/create", data={"username": "botadmin", "role": "admin"}, headers=headers).status_code == 400
+    with sessions() as s:
+        assert service_users.get_user(s, "botadmin") is None
+    response = client.post("/ui/users/create", data={"username": "botadmin", "role": "admin", "tg_id": "123"}, headers=headers)
+    assert response.status_code == 303, response.text
+    with sessions() as s:
+        user = s.query(BotUser).filter_by(username="botadmin").one()
+        assert user.role == "admin" and user.tg_id == 123
+
+
+def test_user_rename_and_promote_in_one_update(ui):
+    client, sessions = ui
+    with sessions.begin() as s:
+        service_users.ensure_user(s, "botuser")
+    login(client)
+    response = client.post(
+        "/ui/users/botuser/update",
+        data={"_csrf": csrf_of(client)["X-CSRF-Token"], "username": "renamed", "tg_id": "456",
+              "role": "admin", "config_limit": "-1", "status": "enabled"},
+    )
+    assert response.status_code == 303
+    with sessions() as s:
+        user = service_users.get_user(s, "renamed")
+        assert user and user.tg_id == 456 and user.role == "admin" and user.config_limit == -1
+
+
+def test_accounts_create_password_reset_and_safeguards(ui):
+    client, sessions = ui
+    login(client)
+    headers = csrf_of(client)
+    with sessions() as s:
+        accounts = {a.username: a.id for a in s.query(WebAccount).all()}
+    assert client.post("/ui/accounts/create", data={"username": "newui", "password": PW, "role": "viewer"}, headers=headers).status_code == 303
+    assert "newui" in client.get("/ui/accounts").text
+    with sessions() as s:
+        new_id = s.query(WebAccount).filter_by(username="newui").one().id
+    assert client.post(f"/ui/accounts/{new_id}/password", data={"password": "reset-password-123"}, headers=headers).status_code == 303
+    client.cookies.clear()
+    assert login(client, "newui", "reset-password-123").status_code == 200
+    client.cookies.clear()
+    login(client)
+    headers = csrf_of(client)
+    admin_id = accounts["admin"]
+    assert client.post(f"/ui/accounts/{admin_id}/update", data={"role": "viewer", "enabled": "on"}, headers=headers).status_code == 400
+    assert "cannot disable or demote" in client.post(f"/ui/accounts/{admin_id}/update", data={"role": "admin"}, headers=headers).text
+    assert "cannot delete your own" in client.post(f"/ui/accounts/{admin_id}/delete", headers=headers).text
+    assert client.post(f"/ui/accounts/{admin_id}/delete").status_code == 403
+    with sessions.begin() as s:
+        webauth.create_account(s, "admin2", PW, "admin")
+        second_id = s.query(WebAccount).filter_by(username="admin2").one().id
+    assert client.post(f"/ui/accounts/{second_id}/update", data={"role": "viewer", "enabled": "on"}, headers=headers).status_code == 303
+    assert client.post(f"/ui/accounts/{admin_id}/update", data={"role": "viewer", "enabled": "on"}, headers=headers).status_code == 400
+
+def test_devices_create_reassign_revoke_and_probe_protection(ui):
+    client, sessions = ui
+    instance, _, _ = make_instance(client)
+    with sessions.begin() as s:
+        service_users.ensure_user(s, "device_owner")
+        probe = Peer(instance_id=instance["id"], name="probe", public_key="A" * 43 + "=", allowed_ip="10.255.255.1", owner="__probe__")
+        s.add(probe)
+        s.flush()
+        probe_id = probe.id
+    login(client)
+    headers = csrf_of(client)
+    data = {"owner": "device_owner", "name": "phone", "instance_id": str(instance["id"])}
+    assert client.post("/ui/devices/create", data=data).status_code == 403
+    assert client.post("/ui/devices/create", data=data, headers=headers).status_code == 303
+    with sessions() as s:
+        peer = s.query(Peer).filter_by(name="phone").one()
+        peer_id = peer.id
+    assert client.post(f"/ui/devices/{peer_id}/owner", data={"owner": ""}, headers=headers).status_code == 303
+    assert client.post(f"/ui/devices/{peer_id}/owner", data={"owner": "device_owner"}).status_code == 403
+    assert client.post(f"/ui/devices/{peer_id}/revoke", headers=headers).status_code == 303
+    assert client.post(f"/ui/devices/{probe_id}/revoke").status_code == 403
+    assert client.post(f"/ui/devices/{probe_id}/owner", data={"owner": ""}, headers=headers).status_code == 400
+    assert client.post(f"/ui/devices/{probe_id}/revoke", headers=headers).status_code == 404
 
 
 TOKEN = "tok-0123456789abcdef"
@@ -317,7 +430,7 @@ def test_admin_can_create_instance_node_and_placement(ui):
         iid, nid = instance.id, node.id
     assert client.post(f"/ui/instances/{iid}/placements",
         data={"node_id": str(nid), "role": "active", "weight": "1", **token}).status_code == 303
-    assert f"node1" in client.get(f"/ui/instances/{iid}").text
+    assert "node1" in client.get(f"/ui/instances/{iid}").text
     client.cookies.clear()
     login(client, "ops")
     assert client.post("/ui/nodes/create", data={"name": "blocked", **csrf_of(client)}).status_code == 403
@@ -498,6 +611,73 @@ def test_failover_empty_state(ui):
     login(client)
     page = client.get("/ui/failover")
     assert "No pending proposals" in page.text and "No proposals" in page.text
+
+
+def test_failover_settings_env_priority_roles_and_csrf(tmp_path, crypto, monkeypatch):
+    monkeypatch.setenv("WGOCTOPUS_FAILOVER_MODE", "auto")
+    app, sessions, engine = build(tmp_path, crypto, monkeypatch)
+    with sessions.begin() as s:
+        for username, role in (("admin", "admin"), ("ops", "operator"), ("view", "viewer")):
+            webauth.create_account(s, username, PW, role)
+    with TestClient(app, follow_redirects=False) as client:
+        login(client)
+        page = client.get("/ui/failover")
+        assert page.status_code == 200 and 'name="mode" disabled' in page.text and "set via env" in page.text
+        payload = {"mode": "confirm", "down_seconds": "80", "proposal_ttl_seconds": "700",
+                   "cooldown_seconds": "30", "eval_interval": "5"}
+        assert client.post("/ui/failover/settings", data=payload).status_code == 403
+        assert client.post("/ui/failover/settings", data=payload | {"_csrf": csrf_of(client)["X-CSRF-Token"]}).status_code == 303
+        with sessions() as s:
+            row = s.get(FailoverSettings, 1)
+            assert row.mode == "confirm" and row.down_seconds == 80 and row.eval_interval == 5
+        assert "auto" in client.get("/ui/failover").text
+        assert client.post("/ui/failover/settings", data=payload | {"down_seconds": "0", "_csrf": csrf_of(client)["X-CSRF-Token"]}).status_code == 400
+        client.cookies.clear()
+        login(client, "ops")
+        assert client.post("/ui/failover/settings", data=payload | {"_csrf": csrf_of(client)["X-CSRF-Token"]}).status_code == 403
+        client.cookies.clear()
+        login(client, "view")
+        assert client.post("/ui/failover/settings", data=payload | {"_csrf": csrf_of(client)["X-CSRF-Token"]}).status_code == 403
+    engine.dispose()
+
+
+def test_failover_ui_probe_and_link_crud(ui):
+    client, sessions = ui
+    instance, node_a, _node_b = make_instance(client)
+    hop = add_node(client, "hop-ui", kind="hop", hop_ip="10.0.0.1", wan_interface="eth0")
+    assert client.post("/ui/failover/links", data={"hop_id": hop["id"], "instance_id": instance["id"]}).status_code == 401
+    login(client, "view")
+    assert client.post("/ui/failover/links", data={"hop_id": hop["id"], "instance_id": instance["id"]}).status_code == 403
+    client.cookies.clear()
+    login(client)
+    csrf = {"_csrf": csrf_of(client)["X-CSRF-Token"]}
+    link = {"hop_id": str(hop["id"]), "instance_id": str(instance["id"]), **csrf}
+    assert client.post("/ui/failover/links", data={k: v for k, v in link.items() if k != "_csrf"}).status_code == 403
+    assert client.post("/ui/failover/links", data=link).status_code == 303
+    with sessions() as s:
+        assert s.scalar(select(HopLink).where(HopLink.hop_id == hop["id"])) is not None
+    probe = link | {"runner_node_id": str(node_a["id"])}
+    assert client.post("/ui/failover/probes", data=probe).status_code == 303
+    with sessions() as s:
+        probe_id = s.scalar(select(Probe.id).where(Probe.hop_id == hop["id"]))
+    assert client.post(f"/ui/failover/probes/{probe_id}/delete", data=csrf).status_code == 400
+    assert client.post(f"/ui/failover/probes/{probe_id}/delete", data=csrf | {"confirm": "yes"}).status_code == 303
+    assert client.post(f"/ui/failover/links/{hop['id']}/{instance['id']}/delete", data=csrf).status_code == 400
+    assert client.post(f"/ui/failover/links/{hop['id']}/{instance['id']}/delete", data=csrf | {"confirm": "yes"}).status_code == 303
+    with sessions() as s:
+        assert s.scalar(select(Probe.id).where(Probe.id == probe_id)) is None
+        assert s.scalar(select(HopLink.id).where(HopLink.hop_id == hop["id"])) is None
+
+
+def test_operator_manual_failover_requires_confirmation_and_csrf(ui):
+    client, _sessions = ui
+    instance, _source, target = make_instance(client)
+    login(client, "ops")
+    form = {"instance_id": str(instance["id"]), "node_id": str(target["id"]), "confirm": "yes"}
+    assert client.post("/ui/failover/manual", data=form).status_code == 403
+    csrf = {"_csrf": csrf_of(client)["X-CSRF-Token"]}
+    assert client.post("/ui/failover/manual", data=form | csrf | {"confirm": "no"}).status_code == 400
+    assert client.post("/ui/failover/manual", data=form | csrf).status_code == 303
 
 
 def test_operator_confirms_and_rejects_failover(ui):

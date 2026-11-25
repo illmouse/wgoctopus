@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .awgcps import generate_cps, validate_cps_chain
-from .awgparams import generate_obfuscation, validate_3x_fields, validate_obfuscation
+from .awgparams import generate_obfuscation, validate_obfuscation
 from .crypto import Crypto
 from .keys import derive_public, generate_keypair, generate_psk, next_free_peer_ip
 from .models import (
@@ -50,12 +50,32 @@ def _default_obfuscation(mtu=None, version="2.0"):
     return generate_obfuscation(version=version, mtu=mtu or 1500)
 
 
+def complete_import_obfuscation(obfuscation, mtu, version):
+    required = {"jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4"}
+    if not obfuscation:
+        return obfuscation
+    values = {**_default_obfuscation(mtu, version), **obfuscation} if not required <= obfuscation.keys() else dict(obfuscation)
+    try:
+        for key in ("jc", "jmin", "jmax", "s1", "s2", "s3", "s4"):
+            if key in values:
+                values[key] = int(values[key])
+    except (TypeError, ValueError):
+        raise ValueError("invalid obfuscation parameters") from None
+    return values
+
+
 def validate_endpoint_host(value):
     if value is None:
         return None
     try:
         if len(value) > 253 or not value or any(c.isspace() for c in value) or "://" in value:
             raise ValueError
+        if value.count(":") == 1:
+            host, port = value.rsplit(":", 1)
+            if port.isdigit():
+                if not 1 <= int(port) <= 65535:
+                    raise ValueError
+                return f"{validate_endpoint_host(host)}:{port}"
         try:
             ipaddress.ip_address(value)
         except ValueError:
@@ -91,10 +111,12 @@ def validate_client_allowed_ips(value):
 def create_instance(session: Session, name, listen_port, address, *, obfuscation=None, mtu=None,
                     cps_profile=None, intensity="medium",
                     egress_interface=None, snat_ip=None, private_key=None, endpoint_host=None,
-                    client_dns=None, client_keepalive=None, client_allowed_ips=None, crypto=None, awg_version="2.0"):
+                    client_dns=None, client_keepalive=None, client_allowed_ips=None, crypto=None, awg_version="3.1"):
     if not re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", name):
         raise ValueError("instance name must be a valid state interface name (1-15 characters)")
     ipaddress.ip_interface(address)
+    if mtu is None and awg_version in ("3.0", "3.1"):
+        mtu = 1280
     generated = obfuscation is None
     if generated:
         effective_mtu = mtu or 1500
@@ -103,11 +125,8 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
             obfuscation.update({key: value for key, value in generate_cps(
                 cps_profile, mtu=effective_mtu, intensity=intensity
             ).items() if value})
-    # Quality rules (S collisions, H range form, MTU) apply only to values we generate; explicit
-    # values (e.g. imported from an existing server) are accepted as the daemon accepts them and
-    # are fully checked by the agent on push. Only the CPS syntax is checked here.
     try:
-        checks = validate_obfuscation(obfuscation, mtu=mtu or 1500, version=awg_version) if generated else validate_3x_fields(obfuscation)
+        checks = validate_obfuscation(obfuscation, mtu=mtu or 1500, version=awg_version)
         invalid = checks or validate_cps_chain(
             {key: value for key, value in obfuscation.items() if key in {f"i{i}" for i in range(1, 6)}}
         )
@@ -130,7 +149,7 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
     public = public or public_generated
     instance = Instance(name=name, listen_port=listen_port, address=address,
                         private_key_enc=_crypto(crypto).encrypt(private), public_key=public,
-                        obfuscation=obfuscation, mtu=mtu,
+                        obfuscation=obfuscation, awg_version=awg_version, mtu=mtu,
                         egress_interface=egress_interface, snat_ip=snat_ip, endpoint_host=endpoint_host,
                         client_dns=client_dns, client_keepalive=client_keepalive,
                         client_allowed_ips=client_allowed_ips)
@@ -451,6 +470,10 @@ def render_client_config(session: Session, peer_id, endpoint_host=None, *, dns=N
     lines.extend(["", "[Peer]", f"PublicKey = {instance.public_key}"])
     if peer.preshared_key_enc:
         lines.append(f"PresharedKey = {c.decrypt(peer.preshared_key_enc)}")
-    lines.extend([f"AllowedIPs = {instance.client_allowed_ips or '0.0.0.0/0'}", f"Endpoint = {endpoint_host}:{instance.listen_port}",
+    endpoint_has_port = endpoint_host.rsplit(":", 1)[-1].isdigit() and (
+        endpoint_host.count(":") == 1 or endpoint_host.startswith("[")
+    )
+    endpoint = endpoint_host if endpoint_has_port else f"{endpoint_host}:{instance.listen_port}"
+    lines.extend([f"AllowedIPs = {instance.client_allowed_ips or '0.0.0.0/0'}", f"Endpoint = {endpoint}",
                   f"PersistentKeepalive = {instance.client_keepalive if instance.client_keepalive is not None else 25}", ""])
     return "\n".join(lines)

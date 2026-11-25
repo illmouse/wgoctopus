@@ -11,10 +11,75 @@
     <dt>Evaluation interval</dt><dd>{{ settings.eval_interval }} s</dd>
   </dl>
 </div>
+{% if can_admin %}
+<h2>Settings</h2>
+<form method="post" action="/ui/failover/settings" class="card">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  {% for key, label in [('mode', 'Mode'), ('down_seconds', 'Down seconds'), ('proposal_ttl_seconds', 'Proposal TTL seconds'), ('cooldown_seconds', 'Cooldown seconds'), ('eval_interval', 'Evaluation interval seconds')] %}
+  <label>{{ label }}
+    {% if key == 'mode' %}
+    <select name="mode" {% if settings.locked[key] %}disabled{% endif %}>
+      {% for mode in ['off', 'confirm', 'auto'] %}<option value="{{ mode }}" {% if settings.mode == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <input type="number" name="{{ key }}" value="{{ settings[key] }}" min="{{ 0 if key == 'cooldown_seconds' else 1 }}" step="any" {% if settings.locked[key] %}disabled{% endif %}>
+    {% endif %}
+    {% if settings.locked[key] %}<span class="muted">set via env</span>{% endif %}
+  </label>
+  {% endfor %}
+  <button type="submit">Save settings</button>
+</form>
+{% endif %}
 
 <h2>Pending proposals</h2>
 <div id="failover-result"></div>
 {% include "_failover_pending.html" %}
+
+<h2>Manual failover</h2>
+{% if can_operate %}
+<form method="post" action="/ui/failover/manual" class="card">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Instance <select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <label>Target node <select name="node_id" required>{% for item in nodes if item.kind == 'awg' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <label><input type="checkbox" name="confirm" value="yes" required> I confirm the manual switch</label>
+  <button type="submit">Switch now</button>
+</form>
+{% endif %}
+
+<h2>Hop links</h2>
+{% if can_admin %}
+<form method="post" action="/ui/failover/links" class="card">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Hop <select name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <label>Instance <select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <button type="submit">Add hop link</button>
+</form>
+{% endif %}
+<table><thead><tr><th>Hop</th><th>Instance</th>{% if can_admin %}<th>Action</th>{% endif %}</tr></thead><tbody>
+{% for link in links %}<tr><td>{{ link.hop }}</td><td>{{ link.instance }}</td>{% if can_admin %}<td>
+  <form method="post" action="/ui/failover/links/{{ link.hop_id }}/{{ link.instance_id }}/delete">
+    <input type="hidden" name="_csrf" value="{{ info.csrf }}"><label><input type="checkbox" name="confirm" value="yes" required> Confirm delete</label><button type="submit">Delete</button>
+  </form>
+</td>{% endif %}</tr>{% else %}<tr><td colspan="3">No hop links</td></tr>{% endfor %}
+</tbody></table>
+
+<h2>Probes</h2>
+{% if can_admin %}
+<form method="post" action="/ui/failover/probes" class="card">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Hop <select name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <label>Instance <select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <label>Runner node <select name="runner_node_id" required>{% for item in nodes %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+  <button type="submit">Add probe</button>
+</form>
+{% endif %}
+<table><thead><tr><th>#</th><th>Hop</th><th>Instance</th><th>Runner</th><th>Status</th>{% if can_admin %}<th>Action</th>{% endif %}</tr></thead><tbody>
+{% for probe in probes %}<tr><td>{{ probe.id }}</td><td>{{ probe.hop }}</td><td>{{ probe.instance }}</td><td>{{ probe.runner }}</td><td>{{ probe.status }}</td>{% if can_admin %}<td>
+  <form method="post" action="/ui/failover/probes/{{ probe.id }}/delete">
+    <input type="hidden" name="_csrf" value="{{ info.csrf }}"><label><input type="checkbox" name="confirm" value="yes" required> Confirm delete</label><button type="submit">Delete</button>
+  </form>
+</td>{% endif %}</tr>{% else %}<tr><td colspan="6">No probes</td></tr>{% endfor %}
+</tbody></table>
 
 <h2>History ({{ total }})</h2>
 <p class="pager">

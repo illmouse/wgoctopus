@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Users - wgoctopus{% endblock %}
+{% block body %}
+<h1>Bot users</h1>
+{% if editable %}
+<form method="post" action="/ui/users/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+<label>Username <input name="username" required></label><label>Telegram ID <input name="tg_id" type="number"></label>
+<label>Role <select name="role"><option>user</option><option>admin</option></select></label>
+<label>Config limit <input name="config_limit" type="number" min="-1" value="3"></label><button>Create</button></form>
+{% endif %}
+<table><thead><tr><th>Username</th><th>Telegram ID</th><th>Role</th><th>Limit</th><th>Status</th>{% if editable %}<th>Actions</th>{% endif %}</tr></thead><tbody>
+{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.tg_id or "" }}</td><td>{{ u.role }}</td><td>{{ u.config_limit }}</td><td>{{ u.status }}</td>
+{% if editable %}<td><form method="post" action="/ui/users/{{ u.username }}/update"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+<input name="username" value="{{ u.username }}" aria-label="Telegram username">
+<input name="tg_id" type="number" value="{{ u.tg_id or '' }}" aria-label="Telegram ID">
+<select name="role"><option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option><option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option></select>
+<input name="config_limit" type="number" min="-1" value="{{ u.config_limit }}" aria-label="Config limit">
+<select name="status"><option value="enabled" {% if u.status == 'enabled' %}selected{% endif %}>enabled</option><option value="disabled" {% if u.status == 'disabled' %}selected{% endif %}>disabled</option></select><button>Save</button></form>
+<form method="post" action="/ui/users/{{ u.username }}/delete"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Delete</button></form></td>{% endif %}</tr>{% endfor %}
+</tbody></table>
+{% endblock %}

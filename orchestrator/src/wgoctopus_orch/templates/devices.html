@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Devices - wgoctopus{% endblock %}
+{% block body %}<h1>Devices</h1>
+{% if info.role == 'admin' %}<form method="post" action="/ui/devices/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+<label>Name <input name="name" required maxlength="15"></label><label>Instance <select name="instance_id" required>{% for i in instances %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
+<label>Owner <select name="owner" required>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select></label><button>Create device</button></form>{% endif %}
+<table><thead><tr><th>Name</th><th>Instance</th><th>Owner</th><th>Enabled</th>{% if info.role == 'admin' %}<th>Assign owner</th><th>Actions</th>{% endif %}</tr></thead><tbody>
+{% for peer, instance_name in devices %}<tr><td>{{ peer.name }}</td><td>{{ instance_name }}</td><td>{{ peer.owner or '' }}</td><td>{{ peer.enabled }}</td>
+{% if info.role == 'admin' %}<td><form method="post" action="/ui/devices/{{ peer.id }}/owner"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><select name="owner"><option value="">Unassigned</option>{% for u in users %}<option value="{{ u.username }}" {% if peer.owner == u.username %}selected{% endif %}>{{ u.username }}</option>{% endfor %}</select><button>Assign</button></form></td><td><form method="post" action="/ui/devices/{{ peer.id }}/revoke"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Revoke</button></form></td>{% endif %}</tr>{% endfor %}
+</tbody></table>{% endblock %}

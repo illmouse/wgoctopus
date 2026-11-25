@@ -33,6 +33,7 @@ class Instance(Base):
     private_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
     public_key: Mapped[str] = mapped_column(String(44), nullable=False)
     obfuscation: Mapped[dict] = mapped_column(JSON, nullable=False)
+    awg_version: Mapped[str] = mapped_column(String(3), default="3.1", nullable=False)
     mtu: Mapped[int | None] = mapped_column(Integer)
     egress_interface: Mapped[str | None] = mapped_column(String(15))
     snat_ip: Mapped[str | None] = mapped_column(String)
@@ -146,6 +147,16 @@ class AlertState(Base):
     __tablename__ = "alert_state"
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class FailoverSettings(Base):
+    __tablename__ = "failover_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    down_seconds: Mapped[float] = mapped_column(nullable=False)
+    proposal_ttl_seconds: Mapped[float] = mapped_column(nullable=False)
+    cooldown_seconds: Mapped[float] = mapped_column(nullable=False)
+    eval_interval: Mapped[float] = mapped_column(nullable=False)
 
 
 class FailoverProposal(Base):
