@@ -1,5 +1,7 @@
 """Provisioning steps against a stateful fake host (records commands and stdin)."""
 
+from types import SimpleNamespace
+
 import asyncssh
 import pytest
 from sqlalchemy import select
@@ -7,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from wgoctopus_orch.config import Settings
 from wgoctopus_orch.models import Node
-from wgoctopus_orch.provision import ExecResult, ProvisionError, ProvisionRunner
-from wgoctopus_orch.provision_steps import STEPS
+from wgoctopus_orch.provision import ExecResult, ProvisionError, ProvisionRunner, Step, StepContext
+from wgoctopus_orch.provision_steps import STEPS, harden, mgmt_user
 from wgoctopus_orch.service import create_node
 
 TOKEN = "tok-0123456789abcdef"
@@ -23,6 +25,15 @@ class FakeHost:
         self.docker_ok, self.image_ok, self.container = False, False, None
         self.health = True
         self.sudo_ok = True
+        self.verify_fail = False
+        self.verified_user = None
+        self.no_ssh_include = False
+        self.sshd_fail = False
+
+    async def verify_management(self, node, settings):
+        self.verified_user = node.ssh_user
+        if self.verify_fail:
+            raise ProvisionError("management SSH key lacks passwordless sudo")
 
     async def close(self):
         pass
@@ -36,6 +47,10 @@ class FakeHost:
         rc, out = 0, ""
         if "/etc/os-release" in cmd:
             out = self.os_line
+        elif cmd.startswith("grep -Eq") and self.no_ssh_include:
+            rc = 1
+        elif cmd == "sshd -t":
+            rc = int(self.sshd_fail)
         elif cmd == "id -u":
             out = self.uid
         elif cmd == "true":
@@ -84,6 +99,35 @@ class FakeHost:
         return ExecResult(rc, out, "")
 
 
+@pytest.mark.asyncio
+async def test_harden_skip_and_ssh_config_rollback():
+    host = FakeHost()
+    ctx = StepContext(SimpleNamespace(ssh_port=22, agent_port=18080), Settings(), host,
+                      {"harden": False}, extra={"distro": "debian"})
+    assert await harden(ctx) == "skipped"
+    ctx.options = {}
+    ctx.extra["distro"] = "centos"
+    assert await harden(ctx) == "skipped"
+    ctx.extra["distro"] = "debian"
+    host.no_ssh_include = True
+    host.sshd_fail = True
+    with pytest.raises(ProvisionError, match="sshd configuration validation failed"):
+        await harden(ctx)
+    assert any("Include /etc/ssh/sshd_config.d/*.conf" in c for c in host.cmds)
+    rollback = next(c for c in host.cmds if "/tmp/wgoctopus-sshd_config.bak /etc/ssh/sshd_config" in c)
+    assert "/tmp/wgoctopus-sshd.conf.bak" in rollback
+
+
+@pytest.mark.asyncio
+async def test_mgmt_user_rejects_key_without_public_key():
+    host = FakeHost()
+    ctx = StepContext(SimpleNamespace(ssh_private_key_enc="encrypted", ssh_public_key=None,
+                                      ssh_user="root", agent_port=18080),
+                      Settings(), host, {}, extra={"ssh_private_key": "private"})
+    with pytest.raises(ProvisionError, match="no public key"):
+        await mgmt_user(ctx)
+
+
 def factory_for(session):
     return sessionmaker(bind=session.get_bind(), expire_on_commit=False)
 
@@ -112,7 +156,7 @@ async def test_full_run_then_idempotent_rerun(session, crypto):
     runner = make_runner(session, crypto, host)
     view = await run(runner, node.id)
     assert view["state"] == "succeeded", view
-    assert states(view) == ["ok", "ok", "ok", "skipped", "ok", "skipped", "ok", "ok", "ok"]
+    assert states(view) == ["ok", "ok", "ok", "ok", "ok", "ok", "skipped", "ok", "ok", "ok"]
     assert host.files["token"] == TOKEN + "\n" and host.files["sysctl"].startswith("net.ipv4.ip_forward")
     assert "download.docker.com/linux/debian" in host.files["docker.sources"]
     # the token never appears in a command line or a persisted log
@@ -122,12 +166,11 @@ async def test_full_run_then_idempotent_rerun(session, crypto):
     assert "--network host" in run_cmd and "--cap-add NET_ADMIN" in run_cmd and "--hop-enabled" not in run_cmd
     again = await run(runner, node.id)
     assert again["state"] == "succeeded"
-    assert states(again) == ["ok", "skipped", "skipped", "skipped", "skipped", "skipped", "skipped", "skipped", "ok"]
+    assert states(again) == ["ok", "skipped", "skipped", "ok", "ok", "skipped", "skipped", "skipped", "skipped", "ok"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("host_kwargs,msg", [
-    ({"os_line": "centos stream x86_64"}, "unsupported OS"),
     ({"os_line": "debian bookworm armv7l"}, "unsupported architecture"),
     ({"uid": "1000"}, "root or use a sudo"),
     ({"sudo": True},  "sudo is required"),
@@ -154,6 +197,18 @@ async def test_hop_flag_and_ubuntu_repo(session, crypto):
 
 
 @pytest.mark.asyncio
+async def test_non_debian_skips_package_and_hardening_steps(session, crypto):
+    node = create_node(session, "other-os", "127.0.0.1", "root", crypto=crypto)
+    host = FakeHost(os_line="centos stream x86_64")
+    host.docker_ok = True
+    view = await run(make_runner(session, crypto, host), node.id)
+    assert view["state"] == "succeeded", view
+    assert states(view)[1] == "skipped"
+    assert states(view)[4] == "skipped"
+    assert "unsupported distribution" in view["steps"][4]["log"]
+
+
+@pytest.mark.asyncio
 async def test_mgmt_user_and_pull_mode_persist_on_node(session, crypto, tmp_path):
     key = asyncssh.generate_private_key("ssh-ed25519")
     key_file = tmp_path / "id"
@@ -165,13 +220,14 @@ async def test_mgmt_user_and_pull_mode_persist_on_node(session, crypto, tmp_path
                      pull_host_key="SHA256:" + "A" * 43)
     assert view["state"] == "succeeded", view
     line = host.files["authorized_keys"]
-    assert line.startswith('restrict,port-forwarding,permitopen="127.0.0.1:18080" ssh-ed25519 ')
+    assert line.startswith("ssh-ed25519 ") and "restrict" not in line
     run_cmd = next(c for c in host.cmds if c.startswith("docker run"))
     assert "--pull-server 198.51.100.9:2222" in run_cmd and "--pull-user pull1" in run_cmd
     session.expire_all()
     row = session.scalar(select(Node).where(Node.name == "pull1"))
     assert row.ssh_user == "wgoctopus" and row.pull_public_key == "ssh-ed25519 AAAAnodekey"
-    assert row.provision_options["login_user"] == "root"
+    assert row.ssh_private_key_enc and row.ssh_public_key
+    assert host.verified_user == "wgoctopus"
 
     # Re-provisioning must log in as the original user, not the restricted management user.
     seen = []
@@ -185,7 +241,7 @@ async def test_mgmt_user_and_pull_mode_persist_on_node(session, crypto, tmp_path
             "pull_host_key": "SHA256:" + "A" * 43, "login_user": "root"}
     job = again.create_job(node.id, opts)
     await again.run_job(job)
-    assert again.job_view(job)["state"] == "succeeded" and seen == ["root"]
+    assert again.job_view(job)["state"] == "succeeded" and seen == ["wgoctopus"]
 
 
 @pytest.mark.asyncio
@@ -199,7 +255,66 @@ async def test_pull_requires_server_and_host_key_and_bad_mgmt_user(session, cryp
     assert view["state"] == "failed" and "invalid mgmt_user" in view["error"]
     ok = create_node(session, "pull3", "127.0.0.1", "root", crypto=crypto)
     view = await run(make_runner(session, crypto, FakeHost()), ok.id, mgmt_user="wgoctopus")
-    assert view["state"] == "failed" and "key file" in view["error"]
+    assert view["state"] == "succeeded"
+    session.refresh(ok)
+    assert ok.ssh_private_key_enc and ok.ssh_public_key
+
+
+@pytest.mark.asyncio
+async def test_management_key_is_saved_before_verification_and_hardening(session, crypto):
+    node = create_node(session, "verify1", "127.0.0.1", "root", crypto=crypto)
+    host = FakeHost()
+    host.verify_fail = True
+    view = await run(make_runner(session, crypto, host), node.id)
+    assert view["state"] == "failed" and "passwordless sudo" in view["error"]
+    session.refresh(node)
+    assert node.ssh_private_key_enc and node.ssh_public_key
+    assert node.ssh_user == "root"
+    assert not any("sshd_config.d" in cmd for cmd in host.cmds)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_password_is_redacted_from_provision_logs(session, crypto):
+    secret = "bootstrap-password-secret"
+    node = create_node(session, "redact1", "127.0.0.1", "root",
+                       ssh_password=secret, crypto=crypto)
+    host = FakeHost()
+
+    async def fail(ctx):
+        raise ProvisionError(f"authentication failed for {ctx.extra['ssh_password']}")
+
+    runner = ProvisionRunner(factory_for(session), crypto, Settings(),
+                             lambda node, settings: host, [Step("auth", fail)])
+    view = await run(runner, node.id)
+    assert view["state"] == "failed"
+    assert secret not in str(view)
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_missing_and_finished_jobs_and_hides_unexpected_errors(session, crypto):
+    runner = ProvisionRunner(factory_for(session), crypto, Settings(),
+                             lambda node, settings: None, [])
+    with pytest.raises(ProvisionError, match="node not found"):
+        runner.create_job(999)
+    node = create_node(session, "runner-error", "127.0.0.1", "root", crypto=crypto,
+                       provision_options={"login_user": "bootstrap"})
+    seen = []
+
+    def broken_opener(node, settings):
+        seen.append(node.ssh_user)
+        raise RuntimeError("private implementation detail")
+
+    runner.executor_factory = broken_opener
+    job = runner.create_job(node.id)
+    await runner.run_job(job)
+    view = runner.job_view(job)
+    assert view["state"] == "failed" and view["error"] == "provisioning failed (RuntimeError)"
+    assert seen == ["bootstrap"]
+    await runner.run_job(job)
+    auto_node = create_node(session, "auto-busy", "127.0.0.1", "root", crypto=crypto,
+                            provision_options={"auto": True})
+    runner.create_job(auto_node.id)
+    assert runner.auto_provision() == []
 
 
 @pytest.mark.asyncio

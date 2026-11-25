@@ -7,6 +7,7 @@ import re
 import secrets
 from contextlib import contextmanager
 
+import asyncssh
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -142,15 +143,32 @@ def create_instance(session: Session, name, listen_port, address, *, obfuscation
 
 def create_node(session: Session, name, ssh_host, ssh_user, *, ssh_port=22, mgmt_mode="push",
                 agent_port=18080, agent_token=None, egress_interface=None, snat_ip=None,
-                enabled=True, kind="awg", wan_interface=None, hop_ip=None, backend_ip=None, pull_public_key=None, protected=False, provision_options=None, crypto=None):
+                enabled=True, kind="awg", wan_interface=None, hop_ip=None, backend_ip=None, pull_public_key=None,
+                ssh_private_key=None, ssh_public_key=None, ssh_password=None, protected=False,
+                provision_options=None, crypto=None):
     if mgmt_mode not in {"push", "pull", "auto"}:
         raise ValueError("mgmt_mode must be 'push', 'pull', or 'auto'")
+    if ssh_private_key and not ssh_public_key:
+        try:
+            ssh_public_key = asyncssh.import_private_key(ssh_private_key).export_public_key().decode().strip()
+        except (ValueError, asyncssh.Error):
+            raise ValueError("invalid SSH private key") from None
+    if ssh_public_key:
+        try:
+            ssh_public_key = " ".join(asyncssh.import_public_key(ssh_public_key)
+                                      .export_public_key().decode().split()[:2])
+        except (ValueError, asyncssh.Error):
+            raise ValueError("invalid SSH public key") from None
     node = Node(name=name, ssh_host=ssh_host, ssh_port=ssh_port, ssh_user=ssh_user,
                 mgmt_mode=mgmt_mode, agent_port=agent_port,
                 agent_token_enc=_crypto(crypto).encrypt(agent_token or secrets.token_urlsafe(32)),
                 egress_interface=egress_interface, snat_ip=snat_ip, enabled=enabled,
                 kind=kind, wan_interface=wan_interface, hop_ip=hop_ip, backend_ip=backend_ip,
-                pull_public_key=pull_public_key, protected=protected, provision_options=provision_options)
+                pull_public_key=pull_public_key,
+                ssh_private_key_enc=_crypto(crypto).encrypt(ssh_private_key) if ssh_private_key else None,
+                ssh_public_key=ssh_public_key,
+                ssh_password_enc=_crypto(crypto).encrypt(ssh_password) if ssh_password else None,
+                protected=protected, provision_options=provision_options)
     with _transaction(session):
         session.add(node)
         session.flush()

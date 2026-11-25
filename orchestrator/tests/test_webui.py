@@ -14,7 +14,7 @@ from test_provision_steps import FakeHost
 
 from wgoctopus_orch import service, service_users, webauth, webui
 from wgoctopus_orch.failover import FailoverError
-from wgoctopus_orch.models import Event, FailoverProposal, Instance, UserRequest
+from wgoctopus_orch.models import Event, FailoverProposal, Instance, Node, UserRequest
 from wgoctopus_orch.provision import Step
 
 OIDC_ENV = {
@@ -301,6 +301,28 @@ def test_empty_instances(ui):
     client, _ = ui
     login(client)
     assert "No instances yet" in client.get("/ui/instances").text
+
+def test_admin_can_create_instance_node_and_placement(ui):
+    client, sessions = ui
+    login(client)
+    token = {"_csrf": client.get("/auth/me").json()["csrf_token"]}
+    assert client.post("/ui/nodes/create", data={"name": "node1", **token}).status_code == 303
+    node_page = client.get("/ui/nodes")
+    assert "node1" in node_page.text
+    assert client.post("/ui/instances/create", data={"name": "wgnew", "address": "10.9.0.1/24",
+        "listen_port": "51820", **token}).status_code == 303
+    with sessions() as s:
+        instance = s.scalars(select(Instance).where(Instance.name == "wgnew")).one()
+        node = s.scalars(select(Node).where(Node.name == "node1")).one()
+        iid, nid = instance.id, node.id
+    assert client.post(f"/ui/instances/{iid}/placements",
+        data={"node_id": str(nid), "role": "active", "weight": "1", **token}).status_code == 303
+    assert f"node1" in client.get(f"/ui/instances/{iid}").text
+    client.cookies.clear()
+    login(client, "ops")
+    assert client.post("/ui/nodes/create", data={"name": "blocked", **csrf_of(client)}).status_code == 403
+    login(client, "admin")
+    assert client.post("/ui/nodes/create", data={"name": "blocked"}).status_code == 403
 
 
 def test_operator_manages_peers(ui):

@@ -54,7 +54,7 @@ def build_env():
 
 
 def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instances, instance_view, peers_page, ops,
-          failovers, failover_info, requests, bootstrap_info):
+          failovers, failover_info, requests, bootstrap_info, crypto=None, kick=None):
     """Register UI routes.
 
     `lookup(cookie)` returns a session info or None; `status(session)` is the fleet summary;
@@ -123,7 +123,42 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
     @app.get("/ui/nodes", include_in_schema=False)
     def nodes_page(request: Request):
         info, denied = check(request)
-        return denied or render("nodes.html", request, info, **nodes_data())
+        return denied or render("nodes.html", request, info, can_create=webauth.has_role(info.role, "admin"), **nodes_data())
+    @app.post("/ui/nodes/create", include_in_schema=False)
+    async def node_create(request: Request):
+        info, denied = check(request, "admin", page=False)
+        if denied:
+            return denied
+        form = {key: values[0] for key, values in parse_qs(
+            (await request.body()).decode("utf-8", "replace")
+        ).items()}
+        if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")):
+            return Response(status_code=403, headers=SECURITY_HEADERS)
+        def val(key, default=None):
+            value = str(form.get(key, "")).strip()
+            return value or default
+        try:
+            name = val("name")
+            ssh_port = int(val("ssh_port", "22"))
+            agent_port = int(val("agent_port", "18080"))
+            mode, kind = val("mgmt_mode", "push"), val("kind", "awg")
+            if not name or len(name) > 64 or not 1 <= ssh_port <= 65535 or not 1 <= agent_port <= 65535 \
+                    or mode not in {"push", "pull", "auto"} or kind not in {"awg", "hop"}:
+                raise ValueError
+            with sessions.begin() as s:
+                node = service.create_node(
+                    s, name, val("ssh_host", "-"), val("ssh_user", "pull"),
+                    ssh_port=ssh_port, mgmt_mode=mode,
+                    ssh_private_key=val("ssh_private_key"), ssh_public_key=val("ssh_public_key"),
+                    ssh_password=val("ssh_password"),
+                    agent_port=agent_port, enabled=val("enabled") == "on",
+                    kind=kind, crypto=crypto,
+                    provision_options={"harden": form.get("harden") == "on"},
+                )
+                ident = node.id
+            return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/nodes/{ident}"})
+        except (ValueError, TypeError):
+            return render("_error.html", request, info, text="Invalid node details.")
 
     @app.get("/ui/fragments/nodes", include_in_schema=False)
     def nodes_fragment(request: Request):
@@ -228,7 +263,58 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if denied:
             return denied
         with sessions() as s:
-            return render("instances.html", request, info, instances=instances(s), node_names={n["id"]: n["name"] for n in nodes(s)})
+            return render("instances.html", request, info, instances=instances(s), node_names={n["id"]: n["name"] for n in nodes(s)},
+                          can_create=webauth.has_role(info.role, "admin"))
+    @app.post("/ui/instances/create", include_in_schema=False)
+    async def instance_create(request: Request):
+        info, denied = check(request, "admin", page=False)
+        if denied:
+            return denied
+        form = {key: values[0] for key, values in parse_qs(
+            (await request.body()).decode("utf-8", "replace")
+        ).items()}
+        if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")):
+            return Response(status_code=403, headers=SECURITY_HEADERS)
+        try:
+            name = str(form.get("name", "")).strip()
+            port = int(form.get("listen_port", ""))
+            if not 1 <= port <= 65535:
+                raise ValueError
+            with sessions.begin() as s:
+                instance = service.create_instance(
+                    s, name, port,
+                    str(form.get("address", "")).strip(),
+                    endpoint_host=str(form.get("endpoint_host", "")).strip() or None,
+                    crypto=crypto,
+                )
+                ident = instance.id
+            return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/instances/{ident}"})
+        except (ValueError, TypeError):
+            return render("_error.html", request, info, text="Invalid instance details.")
+    @app.post("/ui/instances/{instance_id}/placements", include_in_schema=False)
+    async def placement_create(instance_id: int, request: Request):
+        info, denied = check(request, "admin", page=False)
+        if denied:
+            return denied
+        form = {key: values[0] for key, values in parse_qs(
+            (await request.body()).decode("utf-8", "replace")
+        ).items()}
+        if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")):
+            return Response(status_code=403, headers=SECURITY_HEADERS)
+        try:
+            node_id = int(form.get("node_id", ""))
+            role = str(form.get("role", "active"))
+            weight = int(form.get("weight", "1"))
+            if role not in {"active", "standby"} or weight < 1:
+                raise ValueError
+            with sessions.begin() as s:
+                placement = service.place(s, instance_id, node_id, role, weight, crypto)
+                target_ids = [placement.node_id]
+                if kick:
+                    kick(target_ids)
+            return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/instances/{instance_id}"})
+        except (ValueError, TypeError):
+            return render("_error.html", request, info, text="Invalid placement details.")
 
     @app.get("/ui/instances/{instance_id}", include_in_schema=False)
     def instance_page(instance_id: int, request: Request, offset: int = 0):
@@ -241,9 +327,11 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             if instance is None:
                 return message(request, info, 404, "Instance not found.")
             peers, total = peers_page(s, instance_id, PEER_PAGE, offset)
-            node_names = {n["id"]: n["name"] for n in nodes(s)}
+            all_nodes = nodes(s)
+            node_names = {n["id"]: n["name"] for n in all_nodes}
         return render("instance.html", request, info, instance=instance, peers=peers, total=total, offset=offset, page_size=PEER_PAGE,
-                      node_names=node_names, can_operate=webauth.has_role(info.role, "operator"))
+                      node_names=node_names, can_operate=webauth.has_role(info.role, "operator"),
+                      can_create=webauth.has_role(info.role, "admin"), available_nodes=all_nodes)
 
     @app.post("/ui/instances/{instance_id}/switch", include_in_schema=False)
     def instance_switch(instance_id: int, node_id: int, request: Request):

@@ -27,6 +27,8 @@ SQLite uses WAL and foreign keys. Master keys and secrets must not be logged. Th
 
 Push delivery defaults to an SSH local-forward tunnel from the orchestrator to the node. Configure a client private-key file and a known-hosts file; strict host-key checking is the default. `WGOCTOPUS_SSH_TOFU=true` accepts and records the first presented key in the known-hosts file (mode 0600), then verifies it strictly. A MITM during initial enrollment can therefore be pinned; verify keys out of band when possible. Changed keys are rejected. The optional passphrase is read from a protected file. The agent bearer token is decrypted only when opening the connection. HTTP request bodies, tokens, and private keys are never logged. Direct HTTP is for local development only and requires `WGOCTOPUS_TRANSPORT=direct`.
 
+Nodes may store their own SSH private key and bootstrap password; both are encrypted with the orchestrator master key and are never returned by the API. Provisioning uses the global key as a fallback for initial access, installs a generated per-node management key, verifies key-based SSH and passwordless sudo before applying SSH hardening, and discards the bootstrap password after the key is active.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `WGOCTOPUS_TRANSPORT` | `ssh` | `ssh` or explicitly selected `direct` |

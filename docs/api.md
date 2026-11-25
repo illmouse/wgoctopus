@@ -16,6 +16,8 @@ It also accepts `awg_version` (`2.0`, `3.0`, or `3.1`, default `2.0`), used only
 | POST `/v1/instances/{id}/switch` | Switch active placement (`{"node_id":...}`) |
 | POST/GET `/v1/nodes`; GET/PATCH/DELETE `/v1/nodes/{id}` | Node lifecycle |
 Node management modes are `push`, `pull`, and `auto`. Node responses include the normalized `pull_public_key` and live `pull_connected` status. Pull nodes may omit SSH host/user (stored as `-`/`pull`); push/auto require them. PATCH `pull_public_key: null` clears the key.
+
+`POST /v1/nodes` and `PATCH /v1/nodes/{id}` accept optional `ssh_private_key`, `ssh_public_key`, and `ssh_password` enrollment fields. The private key and password are encrypted at rest; responses reveal only whether each credential is set, never their values. Bootstrap YAML accepts `ssh.private_key` and `ssh.password` as literal strings or `{env: NAME}` / `{file: PATH}` references. Provisioning generates a per-node management key when absent, verifies its SSH and passwordless-sudo access before hardening, then uses it for later SSH connections.
 | GET `/v1/pull` | Pull listener status, public host-key fingerprint, connected node IDs, and connection counters |
 | GET `/v1/hops/{hop_id}/links`; PUT/DELETE `/v1/hops/{hop_id}/links/{instance_id}` | Hop routes, linked instance lifecycle |
 | POST/GET `/v1/instances/{id}/peers`; GET/PATCH/DELETE `/v1/peers/{id}` | Peer lifecycle; list supports owner, enabled, limit, and offset |

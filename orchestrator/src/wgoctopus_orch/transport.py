@@ -67,14 +67,19 @@ class SshTunnelTransport(AgentTransport):
     @asynccontextmanager
     async def open(self, node):
         settings = self.settings
-        if not settings.ssh_key_file:
-            raise ValueError("WGOCTOPUS_SSH_KEY_FILE is required")
         passphrase = None
         if settings.ssh_key_passphrase_file:
             passphrase = Path(settings.ssh_key_passphrase_file).read_text().strip()
+        node_key = getattr(node, "ssh_private_key_enc", None)
+        password_enc = getattr(node, "ssh_password_enc", None)
+        client_keys = [asyncssh.import_private_key(self.crypto.decrypt(node_key))] if node_key else settings.ssh_key_file
+        if not client_keys and not password_enc:
+            raise ValueError("node SSH key or WGOCTOPUS_SSH_KEY_FILE is required")
         conn = await asyncssh.connect(
             node.ssh_host, port=node.ssh_port, username=node.ssh_user,
-            client_keys=[settings.ssh_key_file], passphrase=passphrase,
+            client_keys=client_keys,
+            password=self.crypto.decrypt(password_enc) if password_enc else None,
+            passphrase=passphrase,
             known_hosts=(), client_factory=host_key_client(node, settings),
             connect_timeout=settings.ssh_connect_timeout, keepalive_interval=30,
         )

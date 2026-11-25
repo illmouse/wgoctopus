@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # E2E for orchestrator-driven host provisioning: a local orchestrator installs
-# docker (if needed), a restricted management user, the agent token and the agent
+# docker (if needed), a management user, the agent token and the agent
 # container on a real host over SSH, then reconciles the node through that user.
 set -uo pipefail
 
@@ -16,7 +16,7 @@ MGMT=wgoctopus
 IMAGE=wgoctopus-agent:dev
 TMP=$(mktemp -d)
 PASS=0 FAIL=0
-FILTER_BEFORE= NAT_BEFORE= CONTAINERS_BEFORE=
+FILTER_BEFORE= NAT_BEFORE= CONTAINERS_BEFORE= SSH_INCLUDE_BEFORE=
 TOKEN=$(openssl rand -hex 32)
 AGENT_TOKEN=$(openssl rand -hex 32)
 printf '%s' "$TOKEN" >"$TMP/api-token"; chmod 600 "$TMP/api-token"
@@ -61,7 +61,7 @@ cleanup() {
   set +e
   docker logs "$ORCH" 2>&1 | tail -n 30 | sed -E 's/(Bearer |token[=: ]+)[A-Za-z0-9._-]+/\1[REDACTED]/Ig' >&2
   docker rm -f "$ORCH" >/dev/null 2>&1
-  remote "docker rm -f wgoctopus-agent >/dev/null 2>&1 || true; docker volume rm wgoctopus-agent-state >/dev/null 2>&1 || true; ip link del woct0 2>/dev/null || true; for t in filter nat; do for c in WGOCT_FWD WGOCT_NAT; do while iptables -t \$t -S 2>/dev/null | grep -q -- \"-j \$c\"; do iptables -t \$t -D FORWARD -j \$c 2>/dev/null || iptables -t \$t -D POSTROUTING -j \$c 2>/dev/null || break; done; iptables -t \$t -F \$c 2>/dev/null || true; iptables -t \$t -X \$c 2>/dev/null || true; done; done; pkill -KILL -u $MGMT; sleep 1; userdel -r $MGMT >/dev/null 2>&1 || true; rm -rf /etc/wgoctopus /etc/sysctl.d/99-wgoctopus.conf" >/dev/null 2>&1
+  remote "docker rm -f wgoctopus-agent >/dev/null 2>&1 || true; docker volume rm wgoctopus-agent-state >/dev/null 2>&1 || true; ip link del woct0 2>/dev/null || true; for t in filter nat; do for c in WGOCT_FWD WGOCT_NAT; do while iptables -t \$t -S 2>/dev/null | grep -q -- \"-j \$c\"; do iptables -t \$t -D FORWARD -j \$c 2>/dev/null || iptables -t \$t -D POSTROUTING -j \$c 2>/dev/null || break; done; iptables -t \$t -F \$c 2>/dev/null || true; iptables -t \$t -X \$c 2>/dev/null || true; done; done; systemctl disable --now wgoctopus-iptables.service >/dev/null 2>&1 || true; iptables -D INPUT -j WGOCTOPUS-INPUT 2>/dev/null || true; iptables -F WGOCTOPUS-INPUT 2>/dev/null || true; iptables -X WGOCTOPUS-INPUT 2>/dev/null || true; rm -f /usr/local/sbin/wgoctopus-iptables /etc/systemd/system/wgoctopus-iptables.service /etc/ssh/sshd_config.d/99-wgoctopus-hardening.conf /etc/fail2ban/jail.d/wgoctopus.conf /etc/sudoers.d/$MGMT; if [ '$SSH_INCLUDE_BEFORE' = no ]; then sed -i '\\|^Include /etc/ssh/sshd_config.d/\\*\\.conf$|d' /etc/ssh/sshd_config; fi; systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true; pkill -KILL -u $MGMT; sleep 1; userdel -r $MGMT >/dev/null 2>&1 || true; userdel -r wgoctopus-outsider >/dev/null 2>&1 || true; rm -rf /etc/wgoctopus /etc/sysctl.d/99-wgoctopus.conf" >/dev/null 2>&1
   if [[ -n $FILTER_BEFORE ]]; then
     local f n c
     f=$(remote 'iptables -S | wc -l' 2>/dev/null); n=$(remote 'iptables -t nat -S | wc -l' 2>/dev/null)
@@ -81,6 +81,7 @@ command -v jq >/dev/null || { printf 'jq is required locally\n'; exit 1; }
 docker image inspect "$IMAGE" >/dev/null 2>&1 || make -C "$ROOT" agent-image || exit 1
 docker image inspect wgoctopus-orchestrator:dev >/dev/null 2>&1 || make -C "$ROOT" orch-image || exit 1
 remote 'command -v docker >/dev/null' || { printf 'FAIL docker must be present on the test host\n'; exit 1; }
+SSH_INCLUDE_BEFORE=$(remote "grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\\*\\.conf' /etc/ssh/sshd_config && echo yes || echo no") || exit 1
 FILTER_BEFORE=$(remote 'iptables -S | wc -l') || exit 1
 NAT_BEFORE=$(remote 'iptables -t nat -S | wc -l') || exit 1
 CONTAINERS_BEFORE=$(remote 'docker ps -q --no-trunc | sort') || exit 1
@@ -123,8 +124,14 @@ check 'no secrets in job log' bash -c "! curl -fsS -H 'Authorization: Bearer $TO
 check 'agent image loaded from archive' remote "docker image inspect $IMAGE >/dev/null"
 check 'agent container running' remote "[ \"\$(docker inspect -f '{{.State.Running}}' wgoctopus-agent)\" = true ]"
 check 'token file mode 0600 and not world readable' remote "[ \"\$(stat -c %a /etc/wgoctopus/token)\" = 600 ]"
-check 'management user key is restricted' remote "grep -q '^restrict,port-forwarding,permitopen=\"127.0.0.1:18080\" ' /home/$MGMT/.ssh/authorized_keys"
-check 'management user has no shell' bash -c "! ssh $SSH_OPTS -o BatchMode=yes $MGMT@$HOSTADDR true"
+NODE_PUBLIC_KEY=$(node_json | jq -r .ssh_public_key)
+check 'management authorized_keys contains only the per-node key' remote "test \"\$(wc -l < /home/$MGMT/.ssh/authorized_keys)\" -eq 1 && grep -Fxq '$NODE_PUBLIC_KEY' /home/$MGMT/.ssh/authorized_keys"
+check 'bootstrap key cannot log in as management user' bash -c "! ssh $SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 $MGMT@$HOSTADDR true"
+check 'root SSH login is disabled' bash -c "! ssh $SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 root@$HOSTADDR true"
+remote 'useradd -m -s /bin/bash wgoctopus-outsider 2>/dev/null || true'
+check 'user outside AllowUsers is rejected' bash -c "! ssh $SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 wgoctopus-outsider@$HOSTADDR true"
+check 'fail2ban is active' remote 'systemctl is-active --quiet fail2ban'
+check 'WGOCTOPUS-INPUT firewall chain is installed' remote 'iptables -S WGOCTOPUS-INPUT >/dev/null'
 check 'ip_forward enabled' remote '[ "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 ]'
 check 'node ssh_user switched to management user' bash -c "curl -fsS -H 'Authorization: Bearer $TOKEN' http://127.0.0.1:$API/v1/nodes/$NID | jq -e '.ssh_user==\"$MGMT\"'"
 

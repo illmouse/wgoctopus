@@ -1,4 +1,5 @@
 import pytest
+import asyncssh
 
 from wgoctopus_orch.bootstrap import BootstrapError, validate
 
@@ -11,6 +12,14 @@ def test_bootstrap_collects_schema_and_reference_errors():
     assert "/bad" in error.value.errors
     assert "/placements/0/instance" in error.value.errors
     assert "/hop_links/0/hop" in error.value.errors
+
+
+def test_bootstrap_rejects_injected_ssh_public_key():
+    document = copy.deepcopy(DOC)
+    document["nodes"][0]["ssh"]["public_key"] = "ssh-ed25519 AAAA\ncommand=malicious"
+    with pytest.raises(BootstrapError) as error:
+        validate(document)
+    assert "/nodes/0/ssh/public_key" in error.value.errors
 
 
 import copy
@@ -84,10 +93,36 @@ def test_apply_creates_everything_and_is_idempotent(factory, crypto):
         assert s.scalar(select(BotUser).where(BotUser.username == "bob")).config_limit == 5
         assert s.scalar(select(func.count(Placement.id))) == 1
         assert s.scalar(select(func.count(HopLink.id))) == 1
+
+
+def test_bootstrap_encrypts_node_ssh_credentials(factory, crypto, monkeypatch):
+    monkeypatch.setenv("BOOT_TEST_PASSWORD", "bootstrap-password")
+    document = copy.deepcopy(DOC)
+    key = asyncssh.generate_private_key("ssh-ed25519").export_private_key().decode()
+    document["nodes"][0]["ssh"].update(
+        password={"env": "BOOT_TEST_PASSWORD"}, private_key=key)
+    apply_bootstrap(factory, document, crypto=crypto)
+    with factory() as session:
+        node = session.scalar(select(Node).where(Node.name == "node-1"))
+        assert node.ssh_password_enc != "bootstrap-password"
+        assert crypto.decrypt(node.ssh_password_enc) == "bootstrap-password"
+        assert node.ssh_private_key_enc != key
+        assert crypto.decrypt(node.ssh_private_key_enc) == key
+        assert node.ssh_public_key.startswith("ssh-ed25519 ")
     before = counts(factory)
     again = apply_bootstrap(factory, copy.deepcopy(DOC), crypto=crypto)
     assert not again.created and not again.updated and not again.pruned
     assert counts(factory) == before
+    with factory() as session:
+        node = session.scalar(select(Node).where(Node.name == "node-1"))
+        password_ciphertext = node.ssh_password_enc
+        private_key_ciphertext = node.ssh_private_key_enc
+    repeat = apply_bootstrap(factory, document, crypto=crypto)
+    assert not repeat.updated
+    with factory() as session:
+        node = session.scalar(select(Node).where(Node.name == "node-1"))
+        assert node.ssh_password_enc == password_ciphertext
+        assert node.ssh_private_key_enc == private_key_ciphertext
 
 
 def test_update_non_dangerous_fields_bumps_revisions(factory, crypto):

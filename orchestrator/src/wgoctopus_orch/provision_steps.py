@@ -23,8 +23,6 @@ async def detect(ctx):
     ex = ctx.executor
     res = await ex.run(". /etc/os-release; echo \"$ID $VERSION_CODENAME $(uname -m)\"")
     distro, codename, arch = (res.out.split() + ["", "", ""])[:3]
-    if distro not in {"debian", "ubuntu"}:
-        raise ProvisionError(f"unsupported OS: {distro or 'unknown'} (Debian/Ubuntu only)")
     if arch not in {"x86_64", "aarch64"}:
         raise ProvisionError(f"unsupported architecture: {arch}")
     if not ex.use_sudo:
@@ -40,6 +38,9 @@ async def detect(ctx):
 
 async def packages(ctx):
     ex = ctx.executor
+    if ctx.extra["distro"] not in {"debian", "ubuntu"}:
+        ctx.log(f"package setup skipped on unsupported distribution: {ctx.extra['distro']}")
+        return "skipped"
     missing = (await ex.run(
         f"for p in {BASE_PACKAGES}; do dpkg -s $p >/dev/null 2>&1 || echo $p; done")).out.split()
     if missing:
@@ -61,6 +62,8 @@ async def docker(ctx):
     if (await ex.run("docker version --format '{{.Server.Version}}'", check=False)).rc == 0:
         ctx.log("docker already installed")
         return "skipped"
+    if ctx.extra["distro"] not in {"debian", "ubuntu"}:
+        raise ProvisionError("Docker must be installed before provisioning on this distribution")
     distro, codename = ctx.extra["distro"], ctx.extra["codename"]
     arch = "amd64" if ctx.extra["arch"] == "x86_64" else "arm64"
     repo = (f"Types: deb\nURIs: https://download.docker.com/linux/{distro}\nSuites: {codename}\n"
@@ -76,31 +79,135 @@ async def docker(ctx):
 
 
 async def mgmt_user(ctx):
-    name = ctx.options.get("mgmt_user")
-    if not name:
-        return "skipped"
+    name = ctx.options.get("mgmt_user", "wgoctopus")
     if not name.replace("-", "").replace("_", "").isalnum() or len(name) > 32:
         raise ProvisionError("invalid mgmt_user")
-    key_file = ctx.settings.ssh_key_file
-    if not key_file:
-        raise ProvisionError("SSH key file is required")
-    pub = asyncssh.read_private_key(key_file, ctx.settings.ssh_key_passphrase_file and
-                                    Path(ctx.settings.ssh_key_passphrase_file).read_text().strip()
-                                    ).export_public_key().decode().strip()
-    port = ctx.node.agent_port
-    line = f'restrict,port-forwarding,permitopen="127.0.0.1:{port}" {pub}\n'
-    await _install_user(ctx, name, line)
+    private_key = (ctx.node.ssh_private_key_enc and
+                   ctx.extra.get("ssh_private_key"))
+    if not private_key:
+        key = asyncssh.generate_private_key("ssh-ed25519")
+        private_key = key.export_private_key().decode()
+        pub = key.export_public_key().decode().strip()
+        if ctx.save_ssh_key:
+            ctx.save_ssh_key(private_key, pub)
+        ctx.extra["ssh_private_key"] = private_key
+        ctx.secrets.append(private_key)
+        ctx.node.ssh_public_key = pub
+    else:
+        pub = getattr(ctx.node, "ssh_public_key", None)
+        if not pub:
+            raise ProvisionError("stored management SSH key has no public key")
+    await _install_user(ctx, name, pub + "\n")
+    verifier = getattr(ctx.executor, "verify_management", None)
+    if verifier:
+        original_user = ctx.node.ssh_user
+        ctx.node.ssh_user = name
+        try:
+            await verifier(ctx.node, ctx.settings)
+        finally:
+            ctx.node.ssh_user = original_user
     ctx.extra["new_ssh_user"] = name
+    # Keep bootstrap access until the per-node key has been proven usable.
+    if ctx.settings.ssh_key_file:
+        bootstrap_key = asyncssh.import_private_key(
+            Path(ctx.settings.ssh_key_file).read_bytes(),
+            passphrase=(Path(ctx.settings.ssh_key_passphrase_file).read_text().strip()
+                        if ctx.settings.ssh_key_passphrase_file else None),
+        )
+        keypart = bootstrap_key.export_public_key().decode().split()[1]
+        user = shlex.quote(ctx.node.ssh_user)
+        key = shlex.quote(keypart)
+        await ctx.executor.run(sh(
+            "home=$(getent passwd " + user + " | cut -d: -f6); "
+            "[ -n \"$home\" ] && [ -f \"$home/.ssh/authorized_keys\" ] || exit 0; "
+            "tmp=$(mktemp); "
+            "awk -v key=" + key + " '{for (i=1;i<=NF;i++) if ($i==key) next; print}' "
+            "\"$home/.ssh/authorized_keys\" > \"$tmp\"; "
+            "cat \"$tmp\" > \"$home/.ssh/authorized_keys\"; rm -f \"$tmp\""
+        ))
     ctx.log(f"management user {name} ready")
+
+
+async def harden(ctx):
+    """Apply idempotent baseline SSH, brute-force, firewall and PAM safeguards."""
+    if ctx.options.get("harden", True) is False:
+        ctx.log("security hardening disabled")
+        return "skipped"
+    if ctx.extra.get("distro") not in {"debian", "ubuntu"}:
+        ctx.log("security hardening skipped: unsupported distribution")
+        return "skipped"
+    ex = ctx.executor
+    ssh_port = int(ctx.node.ssh_port)
+    user = ctx.options.get("mgmt_user", "wgoctopus")
+    config = (
+        f"AllowUsers {user}\n"
+        "PermitRootLogin no\n"
+        "PasswordAuthentication no\n"
+        "KbdInteractiveAuthentication no\n"
+        "PubkeyAuthentication yes\n"
+        "X11Forwarding no\n"
+        "MaxAuthTries 3\n"
+        "LoginGraceTime 30\n"
+    )
+    await ex.run("install -d -m 0755 /etc/ssh/sshd_config.d")
+    await ex.run("cp -p /etc/ssh/sshd_config /tmp/wgoctopus-sshd_config.bak")
+    await ex.run("cp -p /etc/ssh/sshd_config.d/99-wgoctopus-hardening.conf /tmp/wgoctopus-sshd.conf.bak 2>/dev/null || true")
+    await ex.run("tee /etc/ssh/sshd_config.d/99-wgoctopus-hardening.conf >/dev/null", stdin=config.encode())
+    if (await ex.run("grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\\*\\.conf' /etc/ssh/sshd_config",
+                     check=False)).rc:
+        await ex.run("printf '\\nInclude /etc/ssh/sshd_config.d/*.conf\\n' >> /etc/ssh/sshd_config")
+    if (await ex.run("sshd -t", check=False)).rc:
+        await ex.run("cp -p /tmp/wgoctopus-sshd_config.bak /etc/ssh/sshd_config; if [ -f /tmp/wgoctopus-sshd.conf.bak ]; then cp -p /tmp/wgoctopus-sshd.conf.bak /etc/ssh/sshd_config.d/99-wgoctopus-hardening.conf; else rm -f /etc/ssh/sshd_config.d/99-wgoctopus-hardening.conf; fi; rm -f /tmp/wgoctopus-sshd_config.bak /tmp/wgoctopus-sshd.conf.bak")
+        raise ProvisionError("sshd configuration validation failed")
+    await ex.run("rm -f /tmp/wgoctopus-sshd_config.bak /tmp/wgoctopus-sshd.conf.bak; systemctl reload ssh 2>/dev/null || systemctl reload sshd")
+    await ex.run("DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban iptables-persistent libpam-pwquality")
+    jail = "[sshd]\nenabled = true\nmaxretry = 5\nbantime = 1h\nfindtime = 10m\nbackend = systemd\n"
+    await ex.run("install -d -m 0755 /etc/fail2ban/jail.d")
+    await ex.run("tee /etc/fail2ban/jail.d/wgoctopus.conf >/dev/null", stdin=jail.encode())
+    await ex.run("systemctl enable --now fail2ban")
+    firewall = (
+        "#!/bin/sh\n"
+        "iptables -N WGOCTOPUS-INPUT 2>/dev/null || true\n"
+        "iptables -F WGOCTOPUS-INPUT\n"
+        f"iptables -A WGOCTOPUS-INPUT -p tcp --dport {ssh_port} -m conntrack --ctstate NEW "
+        "-m hashlimit --hashlimit-above 6/minute --hashlimit-burst 10 "
+        "--hashlimit-mode srcip --hashlimit-name wgoctopus_ssh -j DROP\n"
+        f"iptables -A WGOCTOPUS-INPUT -p tcp --dport {ctx.node.agent_port} ! -i lo -j DROP\n"
+        "iptables -A WGOCTOPUS-INPUT -j RETURN\n"
+        "iptables -C INPUT -j WGOCTOPUS-INPUT 2>/dev/null || iptables -I INPUT 1 -j WGOCTOPUS-INPUT\n"
+    )
+    await ex.run("install -d -m 0755 /usr/local/sbin")
+    await ex.run("tee /usr/local/sbin/wgoctopus-iptables >/dev/null", stdin=firewall.encode())
+    await ex.run("chmod 0755 /usr/local/sbin/wgoctopus-iptables; /usr/local/sbin/wgoctopus-iptables")
+    await ex.run("tee /etc/systemd/system/wgoctopus-iptables.service >/dev/null", stdin=(
+        b"[Unit]\nDescription=WGoctopus input firewall rules\nAfter=network-pre.target\n"
+        b"Before=network.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/wgoctopus-iptables\n"
+        b"RemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n"))
+    await ex.run("systemctl daemon-reload; systemctl enable wgoctopus-iptables")
+    await ex.run("tee /etc/security/faillock.conf >/dev/null",
+                 stdin=b"deny = 5\nunlock_time = 900\nfail_interval = 900\n")
+    await ex.run("tee /etc/security/pwquality.conf >/dev/null", stdin=b"minlen = 14\n")
+    await ex.run("grep -q 'pam_wheel.so.*group=sudo' /etc/pam.d/su || "
+                 "printf '\\nauth required pam_wheel.so use_uid group=sudo\\n' >> /etc/pam.d/su")
+    verifier = getattr(ex, "verify_management", None)
+    if verifier:
+        original_user = ctx.node.ssh_user
+        ctx.node.ssh_user = ctx.extra.get("new_ssh_user", user)
+        try:
+            await verifier(ctx.node, ctx.settings)
+        finally:
+            ctx.node.ssh_user = original_user
+    ctx.log("SSH, fail2ban, persistent firewall and PAM safeguards configured")
 
 
 async def _install_user(ctx, name, line):
     ex = ctx.executor
     q = shlex.quote(name)
-    await ex.run(sh(f"id {q} >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin {q}; "
+    await ex.run(sh(f"id {q} >/dev/null 2>&1 || useradd -m -s /bin/bash {q}; usermod -s /bin/bash {q}; "
                     f"install -d -m 0700 -o {q} -g {q} /home/{q}/.ssh"))
     await ex.run(f"tee /home/{q}/.ssh/authorized_keys >/dev/null", stdin=line.encode())
     await ex.run(f"chown {q}:{q} /home/{q}/.ssh/authorized_keys; chmod 0600 /home/{q}/.ssh/authorized_keys")
+    await ex.run(f"printf '%s\\n' '{name} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{q}; chmod 0440 /etc/sudoers.d/{q}; visudo -cf /etc/sudoers.d/{q}")
 
 
 async def token(ctx):
@@ -192,5 +299,6 @@ async def wait_healthy(ctx):
 
 
 STEPS = [Step("detect", detect), Step("packages", packages), Step("docker", docker),
-         Step("management user", mgmt_user), Step("agent token", token), Step("node key", pull_key),
+         Step("management user", mgmt_user), Step("host security", harden),
+         Step("agent token", token), Step("node key", pull_key),
          Step("agent image", image), Step("agent container", run_agent), Step("health check", wait_healthy)]

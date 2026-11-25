@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+import asyncssh
 
 import yaml
 from sqlalchemy import select
@@ -74,7 +75,21 @@ def validate(document):
                 if key in {"instances", "nodes", "users"} and ident in seen: errors.append(p + "/name")
                 seen.add(ident)
                 if key == "nodes":
-                    _keys(row.get("ssh", {}), {"host", "port", "user"}, p+"/ssh", errors, ("host", "user"))
+                    ssh = row.get("ssh", {})
+                    _keys(ssh, {"host", "port", "user", "password", "private_key", "public_key"}, p+"/ssh", errors, ("host", "user"))
+                    if isinstance(ssh, dict) and "public_key" in ssh:
+                        try: _public_key(ssh["public_key"], f"{p}/ssh/public_key")
+                        except BootstrapError as exc: errors.extend(exc.errors)
+                    for credential in ("password", "private_key"):
+                        value = ssh.get(credential) if isinstance(ssh, dict) else None
+                        if isinstance(value, dict) and (
+                            set(value) not in ({"env"}, {"file"})
+                            or not isinstance(next(iter(value.values()), None), str)
+                        ):
+                            errors.append(f"{p}/ssh/{credential}")
+                        if credential == "private_key" and value is not None and not isinstance(value, dict):
+                            try: asyncssh.import_private_key(value)
+                            except (ValueError, asyncssh.Error, TypeError): errors.append(f"{p}/ssh/private_key")
                     token = row.get("agent_token")
                     if isinstance(token, dict) and (set(token) not in ({"env"}, {"file"}) or not isinstance(next(iter(token.values()), None), str)): errors.append(p+"/agent_token")
                     if row.get("kind", "awg") not in {"awg", "hop"}: errors.append(p+"/kind")
@@ -110,11 +125,22 @@ def validate(document):
     return document
 
 
-def _secret(value):
+def _secret(value, path="/nodes/agent_token"):
     if not isinstance(value, dict): return value
     kind, name = next(iter(value.items()))
     try: return os.environ[name] if kind == "env" else Path(name).read_text().strip()
-    except (KeyError, OSError): raise BootstrapError([f"/nodes/agent_token/{kind}/{name}"]) from None
+    except (KeyError, OSError): raise BootstrapError([f"{path}/{kind}/{name}"]) from None
+
+
+def _public_key(value, path):
+    if value is None:
+        return None
+    try:
+        if "\n" in value or "\r" in value:
+            raise ValueError
+        return " ".join(asyncssh.import_public_key(value).export_public_key().decode().split()[:2])
+    except (ValueError, asyncssh.Error, TypeError):
+        raise BootstrapError([path]) from None
 
 
 def apply_bootstrap(session_factory, document, *, crypto, dry_run=False):
@@ -140,7 +166,7 @@ def apply_bootstrap(session_factory, document, *, crypto, dry_run=False):
                                     if isinstance(params.get(key), list): params[key] = ", ".join(params[key])
                                 obj=service.create_instance(session,name,row["listen_port"],row["address"],crypto=crypto,**params)
                             elif kind == "nodes":
-                                ssh=row.get("ssh",{}); obj=service.create_node(session,name,ssh.get("host","-"),ssh.get("user","pull"),ssh_port=ssh.get("port",22),mgmt_mode=row.get("mgmt_mode","push"),agent_port=row.get("agent_port",18080),agent_token=_secret(row["agent_token"]) if row.get("agent_token") is not None else None,kind=row.get("kind","awg"),pull_public_key=row.get("pull_public_key"),egress_interface=row.get("egress_interface"),snat_ip=row.get("snat_ip"),backend_ip=row.get("backend_ip"),wan_interface=row.get("wan_interface"),hop_ip=row.get("hop_ip"),enabled=row.get("enabled",True),protected=row.get("protected",False),provision_options=row.get("provision"),crypto=crypto)
+                                ssh=row.get("ssh",{}); obj=service.create_node(session,name,ssh.get("host","-"),ssh.get("user","pull"),ssh_port=ssh.get("port",22),mgmt_mode=row.get("mgmt_mode","push"),agent_port=row.get("agent_port",18080),agent_token=_secret(row["agent_token"]) if row.get("agent_token") is not None else None,ssh_private_key=_secret(ssh["private_key"], f"/nodes/{name}/ssh/private_key") if ssh.get("private_key") is not None else None,ssh_public_key=ssh.get("public_key"),ssh_password=_secret(ssh["password"], f"/nodes/{name}/ssh/password") if ssh.get("password") is not None else None,kind=row.get("kind","awg"),pull_public_key=row.get("pull_public_key"),egress_interface=row.get("egress_interface"),snat_ip=row.get("snat_ip"),backend_ip=row.get("backend_ip"),wan_interface=row.get("wan_interface"),hop_ip=row.get("hop_ip"),enabled=row.get("enabled",True),protected=row.get("protected",False),provision_options=row.get("provision"),crypto=crypto)
                             else:
                                 obj=service_users.ensure_admin(session,name) if row.get("role","user")=="admin" else service_users.ensure_user(session,name,config_limit=row.get("config_limit",3))
                             report.created.setdefault(kind,[]).append(name)
@@ -161,6 +187,24 @@ def apply_bootstrap(session_factory, document, *, crypto, dry_run=False):
                             elif kind == "nodes":
                                 for key, attr in (("protected", "protected"), ("provision", "provision_options")):
                                     if key in row and getattr(existing, attr) != row[key]: setattr(existing, attr, row[key]); changed=True
+                                ssh = row.get("ssh", {})
+                                for key, attr, secret in (("host", "ssh_host", False), ("port", "ssh_port", False),
+                                                          ("user", "ssh_user", False), ("public_key", "ssh_public_key", False),
+                                                          ("password", "ssh_password_enc", True), ("private_key", "ssh_private_key_enc", True)):
+                                    if key in ssh:
+                                        value = _secret(ssh[key], f"/nodes/{name}/ssh/{key}") if secret else ssh[key]
+                                        if key == "public_key":
+                                            value = _public_key(value, f"/nodes/{name}/ssh/{key}")
+                                        if secret:
+                                            current = getattr(existing, attr)
+                                            if value and (not current or crypto.decrypt(current) != value):
+                                                value = crypto.encrypt(value)
+                                            elif not value:
+                                                value = None
+                                            else:
+                                                value = current
+                                        if getattr(existing, attr) != value:
+                                            setattr(existing, attr, value); changed=True
                             elif kind == "users":
                                 if "config_limit" in row and existing.config_limit != row["config_limit"]: existing.config_limit=row["config_limit"]; changed=True
                                 if "role" in row and existing.role != row["role"]: existing.role=row["role"]; changed=True

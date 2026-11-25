@@ -138,6 +138,8 @@ class PlacementIn(Strict):
 class ProvisionIn(Strict):
     options: dict | None = None
     confirm_protected: bool = False
+    harden: bool | None = None
+    ssh_password: str | None = None
 
 
 class NodeIn(Strict):
@@ -145,6 +147,9 @@ class NodeIn(Strict):
     ssh_host: str | None = None
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_user: str | None = None
+    ssh_private_key: str | None = None
+    ssh_public_key: str | None = None
+    ssh_password: str | None = None
     mgmt_mode: str = Field(default="push", pattern="^(push|pull|auto)$")
     pull_public_key: str | None = None
     agent_port: int = Field(default=18080, ge=1, le=65535)
@@ -184,6 +189,20 @@ class NodeIn(Strict):
     def public_key(cls, value):
         return _normalize_pull_key(value)
 
+    @field_validator("ssh_public_key")
+    @classmethod
+    def ssh_key(cls, value):
+        return _normalize_pull_key(value)
+
+    @field_validator("ssh_private_key")
+    @classmethod
+    def private_ssh_key(cls, value):
+        if value is not None:
+            try:
+                asyncssh.import_private_key(value)
+            except (ValueError, asyncssh.Error):
+                raise ValueError("invalid OpenSSH private key") from None
+        return value
 
 class PeerIn(Strict):
     name: str
@@ -201,6 +220,9 @@ class NodePatch(Strict):
     ssh_host: str | None = None
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     ssh_user: str | None = None
+    ssh_private_key: str | None = None
+    ssh_public_key: str | None = None
+    ssh_password: str | None = None
     mgmt_mode: str | None = Field(default=None, pattern="^(push|pull|auto)$")
     pull_public_key: str | None = None
     agent_port: int | None = Field(default=None, ge=1, le=65535)
@@ -214,6 +236,21 @@ class NodePatch(Strict):
     wan_interface: str | None = None
     hop_ip: str | None = None
     backend_ip: str | None = None
+
+    @field_validator("ssh_public_key")
+    @classmethod
+    def ssh_key(cls, value):
+        return _normalize_pull_key(value)
+
+    @field_validator("ssh_private_key")
+    @classmethod
+    def private_ssh_key(cls, value):
+        if value is not None:
+            try:
+                asyncssh.import_private_key(value)
+            except (ValueError, asyncssh.Error):
+                raise ValueError("invalid OpenSSH private key") from None
+        return value
 
     @field_validator("hop_ip", "backend_ip")
     @classmethod
@@ -719,6 +756,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         rev=session.get(NodeRevision,n.id); obs=session.get(NodeObserved,n.id)
         status=(app.state.reconciler.status().get(n.id) if app.state.reconciler else None)
         return dict(id=n.id,name=n.name,ssh_host=n.ssh_host,ssh_port=n.ssh_port,ssh_user=n.ssh_user,
+                    ssh_public_key=n.ssh_public_key,
+                    ssh_private_key_set=bool(n.ssh_private_key_enc), ssh_password_set=bool(n.ssh_password_enc),
                     mgmt_mode=n.mgmt_mode,agent_port=n.agent_port,egress_interface=n.egress_interface,snat_ip=n.snat_ip,
                     protected=n.protected, provision=n.provision_options,
                     pull_public_key=n.pull_public_key, pull_connected=bool(app.state.pull_server and app.state.pull_server.is_connected(n.id)),
@@ -749,7 +788,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     async def request_validation_error(_: Request, exc: RequestValidationError):
         errors = exc.errors()
         for error in errors:
-            if "pull_public_key" in error.get("loc", ()):
+            if any(field in error.get("loc", ()) for field in
+                   ("pull_public_key", "ssh_private_key", "ssh_password")):
                 error.pop("input", None)
         return JSONResponse(status_code=422, content={"error":"validation_error","detail":jsonable_encoder(errors)})
 
@@ -850,6 +890,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         n=s.get(Node,ident)
         if not n: raise HTTPException(404,"unknown node")
         options={**(n.provision_options or {}),**valid_options(body.options)}
+        if body.harden is not None:
+            options["harden"] = body.harden
+        if body.ssh_password is not None:
+            n.ssh_password_enc = cipher.encrypt(body.ssh_password) if body.ssh_password else None
         options.pop("auto",None)
         try:
             job_id=app.state.provision.create_job(ident,options,confirm_protected=body.confirm_protected)
@@ -875,7 +919,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.post("/v1/nodes",dependencies=[Depends(auth)],status_code=201)
     def create_node(body:NodeIn,s:Session=Depends(db)):
-        n=service.create_node(s,body.name,body.ssh_host or "-",body.ssh_user or "pull",ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,pull_public_key=body.pull_public_key,protected=body.protected,provision_options=valid_options(body.provision) if body.provision is not None else None,crypto=cipher)
+        n=service.create_node(s,body.name,body.ssh_host or "-",body.ssh_user or "pull",ssh_port=body.ssh_port,mgmt_mode=body.mgmt_mode,agent_port=body.agent_port,agent_token=body.agent_token,egress_interface=body.egress_interface,snat_ip=body.snat_ip,enabled=body.enabled,kind=body.kind,wan_interface=body.wan_interface,hop_ip=body.hop_ip,backend_ip=body.backend_ip,pull_public_key=body.pull_public_key,ssh_private_key=body.ssh_private_key,ssh_public_key=body.ssh_public_key,ssh_password=body.ssh_password,protected=body.protected,provision_options=valid_options(body.provision) if body.provision is not None else None,crypto=cipher)
         return node(n,s)
 
     @app.get("/v1/nodes",dependencies=[Depends(auth)])
@@ -906,6 +950,10 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         for k,v in body.items():
             if k == "agent_token":
                 n.agent_token_enc = cipher.encrypt(v)
+            elif k == "ssh_private_key":
+                n.ssh_private_key_enc = cipher.encrypt(v) if v else None
+            elif k == "ssh_password":
+                n.ssh_password_enc = cipher.encrypt(v) if v else None
             elif k == "provision":
                 n.provision_options = valid_options(v) if v is not None else None
             else:
@@ -1169,7 +1217,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                                         config=peer_config_op, switch=switch_op, failover=failover_op, approve=approve_op,
                                         decline=decline_op, bootstrap=bootstrap_file_op),
                     failovers=failovers_page, failover_info=failover_info, requests=requests_page,
-                    bootstrap_info=lambda: dict(bootstrap_status(), configured_apply=alert_settings.bootstrap_apply))
+                    bootstrap_info=lambda: dict(bootstrap_status(), configured_apply=alert_settings.bootstrap_apply),
+                    crypto=cipher, kick=lambda ids: kick(None, ids))
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

@@ -4,11 +4,14 @@ from types import SimpleNamespace
 import asyncssh
 import pytest
 import pytest_asyncio
+from cryptography.fernet import Fernet
 
 from wgoctopus_orch.config import Settings
-from wgoctopus_orch.provision import ProvisionError, open_executor
+from wgoctopus_orch.crypto import Crypto
+from wgoctopus_orch.provision import ProvisionError, SshExecutor, _text, open_executor
 
 RECEIVED: list[str] = []
+FAIL_SUDO = False
 
 
 class Srv(asyncssh.SSHServer):
@@ -16,7 +19,10 @@ class Srv(asyncssh.SSHServer):
         return True
 
     def password_auth_supported(self):
-        return False
+        return True
+
+    def validate_password(self, username, password):
+        return password == "bootstrap-password"
 
     def public_key_auth_supported(self):
         return True
@@ -25,6 +31,9 @@ class Srv(asyncssh.SSHServer):
 async def handle(process):
     cmd = process.command
     RECEIVED.append(cmd)
+    if cmd == "sudo -n true" and FAIL_SUDO:
+        process.exit(1)
+        return
     if "fail" in cmd:
         process.stderr.write("boom")
         process.exit(3)
@@ -51,7 +60,7 @@ async def server(tmp_path):
     srv = await asyncssh.create_server(
         Srv, "127.0.0.1", 0, server_host_keys=[host], process_factory=handle, encoding="utf-8",
         authorized_client_keys=asyncssh.import_authorized_keys(client.export_public_key().decode()))
-    yield SimpleNamespace(port=srv.sockets[0].getsockname()[1], client_file=client_file, host=host)
+    yield SimpleNamespace(port=srv.sockets[0].getsockname()[1], client_file=client_file, host=host, client=client)
     srv.close()
     await srv.wait_closed()
 
@@ -102,5 +111,61 @@ async def test_non_root_uses_sudo_and_missing_key(server, tmp_path):
         assert ex.use_sudo is True
     finally:
         await ex.close()
-    with pytest.raises(ProvisionError, match="key file"):
+    with pytest.raises(ProvisionError, match="credentials"):
         await open_executor(node(server), Settings())
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_encrypted_node_key(server, tmp_path):
+    crypto = Crypto(Fernet.generate_key())
+    target = node(server)
+    target.ssh_private_key_enc = crypto.encrypt(server.client.export_private_key().decode())
+    ex = await open_executor(target, settings(server, tmp_path), crypto)
+    assert ex.crypto is crypto
+    await ex.close()
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_master_key_environment(server, tmp_path, monkeypatch):
+    key = Fernet.generate_key()
+    monkeypatch.setenv("WGOCTOPUS_MASTER_KEY", key.decode())
+    crypto = Crypto(key)
+    target = node(server)
+    target.ssh_private_key_enc = crypto.encrypt(server.client.export_private_key().decode())
+    ex = await open_executor(target, settings(server, tmp_path))
+    await ex.close()
+
+
+def test_text_none_is_empty():
+    assert _text(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_executor_accepts_encrypted_bootstrap_password(server, tmp_path):
+    crypto = Crypto(Fernet.generate_key())
+    target = node(server)
+    target.ssh_password_enc = crypto.encrypt("bootstrap-password")
+    cfg = Settings(ssh_key_file=None, ssh_known_hosts=str(tmp_path / "kh"),
+                   ssh_tofu=True, ssh_connect_timeout=5)
+    ex = await open_executor(target, cfg, crypto)
+    await ex.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_management_key_verification_checks_sudo(server, tmp_path, fail):
+    global FAIL_SUDO
+    FAIL_SUDO = fail
+    crypto = Crypto(Fernet.generate_key())
+    target = node(server)
+    target.ssh_private_key_enc = crypto.encrypt(server.client.export_private_key().decode())
+    cfg = Settings(ssh_known_hosts=str(tmp_path / "kh"), ssh_tofu=True, ssh_connect_timeout=5)
+    executor = SshExecutor(None, crypto=crypto)
+    try:
+        if fail:
+            with pytest.raises(ProvisionError, match="passwordless sudo"):
+                await executor.verify_management(target, cfg)
+        else:
+            await executor.verify_management(target, cfg)
+    finally:
+        FAIL_SUDO = False

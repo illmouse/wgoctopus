@@ -37,8 +37,9 @@ def _text(data):
 
 
 class SshExecutor:
-    def __init__(self, conn, use_sudo=False):
+    def __init__(self, conn, use_sudo=False, crypto=None):
         self.conn, self.use_sudo = conn, use_sudo
+        self.crypto = crypto
 
     async def run(self, cmd, *, stdin=None, stdin_path=None, timeout=120, check=True):
         safe_cmd = f"sudo -n sh -c {shlex.quote(cmd)}" if self.use_sudo else cmd
@@ -67,15 +68,37 @@ class SshExecutor:
         self.conn.close()
         await self.conn.wait_closed()
 
+    async def verify_management(self, node, settings):
+        key = asyncssh.import_private_key(self.crypto.decrypt(node.ssh_private_key_enc))
+        conn = await asyncssh.connect(node.ssh_host, port=node.ssh_port,
+            username=node.ssh_user, client_keys=[key], known_hosts=(),
+            client_factory=host_key_client(node, settings),
+            connect_timeout=settings.ssh_connect_timeout)
+        try:
+            result = await conn.run("sudo -n true", check=False)
+            if result.exit_status:
+                raise ProvisionError("management SSH key lacks passwordless sudo")
+        finally:
+            conn.close()
+            await conn.wait_closed()
 
-async def open_executor(node, settings):
-    if not settings.ssh_key_file:
-        raise ProvisionError("SSH key file is required")
+
+async def open_executor(node, settings, crypto=None):
     passphrase = Path(settings.ssh_key_passphrase_file).read_text().strip() if settings.ssh_key_passphrase_file else None
+    node_key = getattr(node, "ssh_private_key_enc", None)
+    password_enc = getattr(node, "ssh_password_enc", None)
+    if node_key or password_enc:
+        if crypto is None:
+            from .crypto import Crypto
+            crypto = Crypto()
+    client_keys = [asyncssh.import_private_key(crypto.decrypt(node_key))] if node_key else settings.ssh_key_file
+    if not client_keys and not getattr(node, "ssh_password_enc", None):
+        raise ProvisionError("node SSH credentials are required")
     conn = await asyncssh.connect(node.ssh_host, port=node.ssh_port, username=node.ssh_user,
-        client_keys=[settings.ssh_key_file], passphrase=passphrase, known_hosts=(),
+        client_keys=client_keys, password=(crypto.decrypt(password_enc) if password_enc else None),
+        passphrase=passphrase, known_hosts=(),
         client_factory=host_key_client(node, settings), connect_timeout=settings.ssh_connect_timeout)
-    return SshExecutor(conn, node.ssh_user != "root")
+    return SshExecutor(conn, node.ssh_user != "root", crypto)
 
 
 @dataclass
@@ -88,6 +111,7 @@ class StepContext:
     secrets: list[str] = field(default_factory=list)
     extra: dict = field(default_factory=dict)
     _lines: list[str] = field(default_factory=list, repr=False)
+    save_ssh_key: object | None = field(default=None, repr=False)
 
     def log(self, msg):
         self._lines.append(redact(str(msg), self.secrets))
@@ -107,7 +131,8 @@ def redact(text, secrets):
 
 
 OPTION_TYPES = {"mgmt_user": str, "image": str, "image_archive": str, "force_image": bool, "pull_server": str,
-                "pull_host_key": str, "health_attempts": int, "health_interval": (int, float), "auto": bool, "login_user": str}
+                "pull_host_key": str, "health_attempts": int, "health_interval": (int, float), "auto": bool,
+                "login_user": str, "harden": bool}
 
 
 def validate_options(options):
@@ -160,11 +185,11 @@ class ProvisionRunner:
             if not job or job.state != "queued":
                 return
             node = s.get(Node, job.node_id)
-            snapshot = {k: getattr(node, k) for k in ("id", "name", "kind", "ssh_host", "ssh_port", "ssh_user", "mgmt_mode", "agent_port", "agent_token_enc")}
+            snapshot = {k: getattr(node, k) for k in ("id", "name", "kind", "ssh_host", "ssh_port", "ssh_user", "mgmt_mode", "agent_port", "agent_token_enc", "ssh_private_key_enc", "ssh_public_key", "ssh_password_enc")}
             job.state, job.started_at = "running", now_utc()
             options = dict(job.options or {})
             node_po = dict(node.provision_options or {})
-            login = options.get("login_user") or node_po.get("login_user")
+            login = None if node.ssh_private_key_enc else (options.get("login_user") or node_po.get("login_user"))
             if login:
                 snapshot["ssh_user"] = login
         subject = snapshot["name"]
@@ -175,10 +200,27 @@ class ProvisionRunner:
             node_obj = SimpleNamespace(**snapshot)
             with self.session_factory() as s:
                 token = self.crypto.decrypt(s.get(Node, snapshot["id"]).agent_token_enc)
-            executor = self.executor_factory(node_obj, self.settings)
+            executor = (self.executor_factory(node_obj, self.settings, self.crypto)
+                        if self.executor_factory is open_executor
+                        else self.executor_factory(node_obj, self.settings))
             if asyncio.iscoroutine(executor) or isinstance(executor, asyncio.Future):
                 executor = await executor
-            ctx = StepContext(node_obj, self.settings, executor, options, token, [token])
+            def save_ssh_key(private_key, public_key):
+                encrypted = self.crypto.encrypt(private_key)
+                with self.session_factory.begin() as s:
+                    row = s.get(Node, snapshot["id"])
+                    row.ssh_private_key_enc = encrypted
+                    row.ssh_public_key = public_key
+                node_obj.ssh_private_key_enc = encrypted
+                node_obj.ssh_public_key = public_key
+            extra = {}
+            if snapshot.get("ssh_private_key_enc"):
+                extra["ssh_private_key"] = self.crypto.decrypt(snapshot["ssh_private_key_enc"])
+            if snapshot.get("ssh_password_enc"):
+                extra["ssh_password"] = self.crypto.decrypt(snapshot["ssh_password_enc"])
+            ctx = StepContext(node_obj, self.settings, executor, options, token,
+                              [token, extra.get("ssh_private_key", ""), extra.get("ssh_password", "")], extra,
+                              save_ssh_key=save_ssh_key)
             for seq, step in enumerate(self.steps):
                 with self.session_factory.begin() as s:
                     row = s.scalar(select(ProvisionStep).where(ProvisionStep.job_id == job_id, ProvisionStep.seq == seq))
@@ -211,10 +253,8 @@ class ProvisionRunner:
                 node_row = s.get(Node, snapshot["id"])
                 if node_row is not None:
                     if ctx.extra.get("new_ssh_user"):
-                        po = dict(node_row.provision_options or {})
-                        po.setdefault("login_user", snapshot["ssh_user"])
-                        node_row.provision_options = po
                         node_row.ssh_user = ctx.extra["new_ssh_user"]
+                        node_row.ssh_password_enc = None
                     if ctx.extra.get("pull_public_key"):
                         node_row.pull_public_key = ctx.extra["pull_public_key"]
             self._event("provision.succeeded", subject, {"job_id": job_id})

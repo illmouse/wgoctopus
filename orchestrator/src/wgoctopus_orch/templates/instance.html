@@ -17,6 +17,15 @@
 </div>
 
 <h2>Placements</h2>
+{% if can_create %}
+<form method="post" action="/ui/instances/{{ instance.id }}/placements">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Node <select name="node_id" required>{% for n in available_nodes if n.kind != "hop" %}<option value="{{ n.id }}">{{ n.name }}</option>{% endfor %}</select></label>
+  <label>Role <select name="role"><option>active</option><option>standby</option></select></label>
+  <label>Weight <input name="weight" type="number" min="1" value="1"></label>
+  <button type="submit">Add placement</button>
+</form>
+{% endif %}
 <div id="switch-result"></div>
 <table>
   <thead><tr><th>Node</th><th>Role</th><th>Weight</th><th></th></tr></thead>

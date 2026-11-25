@@ -2,6 +2,26 @@
 {% block title %}Nodes - wgoctopus{% endblock %}
 {% block body %}
 <h1>Nodes</h1>
+{% if can_create %}
+<details><summary>Add node</summary>
+<form method="post" action="/ui/nodes/create">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Name <input name="name" required></label>
+  <label>SSH host <input name="ssh_host" placeholder="-"></label>
+  <label>SSH user <input name="ssh_user" value="pull"></label>
+  <label>SSH password <input name="ssh_password" type="password" autocomplete="new-password"></label>
+  <label>SSH private key <textarea name="ssh_private_key" autocomplete="off"></textarea></label>
+  <label>SSH public key <input name="ssh_public_key"></label>
+  <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22"></label>
+  <label>Management <select name="mgmt_mode"><option>push</option><option>pull</option><option>auto</option></select></label>
+  <label>Agent port <input name="agent_port" type="number" min="1" max="65535" value="18080"></label>
+  <label><input type="checkbox" name="harden" checked> Harden SSH and host security during provisioning</label>
+  <label>Kind <select name="kind"><option>awg</option><option>hop</option></select></label>
+  <label><input type="checkbox" name="enabled" checked> Enabled</label>
+  <button type="submit">Create node</button>
+</form>
+</details>
+{% endif %}
 <div hx-get="/ui/fragments/nodes" hx-trigger="every 10s" hx-swap="innerHTML">
 {% include "_nodes.html" %}
 </div>

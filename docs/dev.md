@@ -91,3 +91,11 @@ volumes:
 `make e2e-orch-provision HOST=root@host` needs an empty host with Docker installed: the local orchestrator provisions it over SSH (agent image delivered via `docker load` from an archive, restricted management user, token file, agent container), reconciles the node through the restricted user, checks that re-provisioning is idempotent (same container, steps skipped, login as the original `login_user`), and cleans the host.
 
 `make e2e-orch-pull HOST=root@host` starts a local orchestrator with `WGOCTOPUS_PULL_LISTEN`, forwards that listener to the host with `ssh -R`, and runs a real agent there with `--pull-*` flags. It checks connect/deny, reconciliation only through the tunnel, reconnect after orchestrator and agent restarts, `auto` fallback from a closed SSH port, loss/recovery of the tunnel, and host cleanup (firewall baseline and containers unchanged).
+# GitHub Container Registry images
+
+GitHub Actions builds `ghcr.io/illmouse/wgoctopus-agent` and
+`ghcr.io/illmouse/wgoctopus-orchestrator` for relevant agent/orchestrator changes
+and `v*` version tags. Pull requests build without publishing; branch and version
+tags are published to GHCR. Set each package's visibility to **Public** in its
+GitHub package settings to allow unauthenticated pulls; private packages require
+registry authentication.

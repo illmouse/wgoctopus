@@ -88,14 +88,28 @@ def test_errors_auth_protected_conflict_cancel(api_client):
 
 
 def test_patch_provision_and_protected(api_client):
-    client, *_ = api_client
-    node = mk(client)
+    client, sessions, _, crypto = api_client
+    secret = "ssh-password-do-not-return"
+    node = mk(client, ssh_password=secret)
+    assert node["ssh_password_set"] is True and secret not in str(node)
+    with sessions() as session:
+        from wgoctopus_orch.models import Node
+        stored = session.get(Node, node["id"]).ssh_password_enc
+        assert stored != secret and crypto.decrypt(stored) == secret
+    changed = client.patch(f"/v1/nodes/{node['id']}", json={"ssh_password": "rotated-password"})
+    assert changed.status_code == 200 and changed.json()["ssh_password_set"]
+    assert "rotated-password" not in changed.text
+    cleared = client.patch(f"/v1/nodes/{node['id']}", json={"ssh_password": None})
+    assert cleared.status_code == 200 and not cleared.json()["ssh_password_set"]
     r = client.patch(f"/v1/nodes/{node['id']}", json={"protected": True, "provision": {"mgmt_user": "wgo"}})
     assert r.status_code == 200 and r.json()["protected"] is True and r.json()["provision"] == {"mgmt_user": "wgo"}
     assert client.patch(f"/v1/nodes/{node['id']}", json={"provision": {"nope": 1}}).status_code == 422
     assert client.patch(f"/v1/nodes/{node['id']}", json={"provision": None}).json()["provision"] is None
     assert client.post("/v1/nodes", json={"name": "bad", "ssh_host": "h", "ssh_user": "u",
-                                          "provision": {"x": 1}}).status_code == 422
+                                           "provision": {"x": 1}}).status_code == 422
+    bad_key = client.post("/v1/nodes", json={"name": "bad-key", "ssh_host": "h", "ssh_user": "u",
+                                              "ssh_private_key": "not a private key"})
+    assert bad_key.status_code == 422 and "not a private key" not in bad_key.text
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,18 @@
 {% block title %}Instances - wgoctopus{% endblock %}
 {% block body %}
 <h1>Instances</h1>
+{% if can_create %}
+<details><summary>Add instance</summary>
+<form method="post" action="/ui/instances/create">
+  <input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <label>Name <input name="name" required pattern="[a-z][a-z0-9-]{0,14}"></label>
+  <label>Address <input name="address" required placeholder="10.0.0.1/24"></label>
+  <label>Listen port <input name="listen_port" type="number" min="1" max="65535" required></label>
+  <label>Endpoint host <input name="endpoint_host"></label>
+  <button type="submit">Create instance</button>
+</form>
+</details>
+{% endif %}
 <table>
   <thead><tr><th>Name</th><th>Address</th><th>Port</th><th>Endpoint</th><th>Active node</th><th>Peers</th></tr></thead>
   <tbody>

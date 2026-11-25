@@ -83,6 +83,35 @@ async def test_known_key_tunnel_get_and_put(ssh_server, fake_agent, tmp_path):
         assert {r[1] for r in fake_agent.requests} >= {"/healthz", "/v1/state"}
 
 
+@pytest.mark.asyncio
+async def test_node_ssh_key_overrides_global_key(ssh_server, fake_agent, tmp_path):
+    known = tmp_path / "known_hosts"
+    label = f"[127.0.0.1]:{ssh_server.port}"
+    known.write_bytes(f"{label} {ssh_server.host_key.export_public_key().decode()}".encode())
+    wrong = asyncssh.generate_private_key("ssh-ed25519")
+    wrong_file = tmp_path / "wrong"
+    wrong_file.write_bytes(wrong.export_private_key())
+    target = node(fake_agent, ssh_server)
+    target.ssh_private_key_enc = TEST_CRYPTO.encrypt(
+        ssh_server.client_key.export_private_key().decode())
+    transport = make_transport(ssh_server, tmp_path, key=wrong_file)
+    async with transport.open(target) as session:
+        assert (await session.request("GET", "/healthz")).text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_node_bootstrap_password_auth(ssh_server, fake_agent, tmp_path):
+    known = tmp_path / "known_hosts"
+    label = f"[127.0.0.1]:{ssh_server.port}"
+    known.write_bytes(f"{label} {ssh_server.host_key.export_public_key().decode()}".encode())
+    target = node(fake_agent, ssh_server)
+    target.ssh_password_enc = TEST_CRYPTO.encrypt("bootstrap-password")
+    transport = SshTunnelTransport(Settings(
+        ssh_key_file=None, ssh_known_hosts=str(known), ssh_connect_timeout=2), crypto=TEST_CRYPTO)
+    async with transport.open(target) as session:
+        assert (await session.request("GET", "/healthz")).text == "ok"
+
+
 async def _tracked_open(monkeypatch, transport, node):
     original = asyncssh.connect
     connections = []

@@ -123,7 +123,7 @@ Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bo
 - Operator actions (CSRF, audited with the actor name): `POST /ui/instances/{id}/switch?node_id=` (event `web.switch`), `POST /ui/instances/{id}/peers` (form body `name`, optional `owner`; `web.peer_add`), `POST /ui/peers/{id}/enabled?value=true|false` (`web.peer_enabled`), `POST /ui/peers/{id}/delete` (`web.peer_delete`, browser confirmation). Successful actions answer `HX-Refresh`; failures render inline.
 - `GET /ui/peers/{id}/config` (operator): the explicit client-config download, `text/plain` attachment, `no-store`, recorded as `peer.config_issued` with `{"by": username}`.
 - The handlers call the same functions as `/v1` (`add_peer_op`, `peer_enabled_op`, `peer_remove_op`, `peer_config_op`, `switch_op` in `api.py`), so validation and reconciler kicks are identical.
-- Not in the UI yet: creating or editing instances and placements (use the bootstrap YAML or `/v1`); admin-only, planned later.
+- Admins can create instances, nodes, and placements from the list/detail pages. Forms use the same `service.create_instance`, `service.create_node`, and `service.place` operations as the API; invalid/conflicting input is rejected and generated agent credentials are never shown. Editing and deletion remain API/bootstrap-only.
 
 ## Failover, requests and bootstrap pages (7.4d)
 

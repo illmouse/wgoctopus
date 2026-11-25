@@ -9,7 +9,10 @@ class SSHServer(asyncssh.SSHServer):
         return True
 
     def password_auth_supported(self):
-        return False
+        return True
+
+    def validate_password(self, username, password):
+        return password == "bootstrap-password"
 
     def public_key_auth_supported(self):
         return True
