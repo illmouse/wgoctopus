@@ -497,9 +497,9 @@ def test_operator_confirms_and_rejects_failover(ui):
     assert client.post(f"{url}/reject", headers=headers).status_code == 204
     assert stub.calls == [("confirm", proposal, "web", "ops"), ("reject", proposal, "web", "ops")]
     stub.error = "stale"
-    assert "stale" in client.post(f"{url}/confirm", headers=headers).text
+    assert "The fleet changed" in client.post(f"{url}/confirm", headers=headers).text
     stub.error = "not_found"
-    assert "not_found" in client.post("/ui/failovers/999/reject", headers=headers).text
+    assert "Proposal not found." in client.post("/ui/failovers/999/reject", headers=headers).text
     client.app.state.failover = None
     assert "disabled" in client.post(f"{url}/confirm", headers=headers).text
     with sessions() as s:

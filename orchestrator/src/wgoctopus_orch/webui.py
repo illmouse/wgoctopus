@@ -28,6 +28,11 @@ SECURITY_HEADERS = {
 NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes"), ("/ui/instances", "Instances"), ("/ui/failover", "Failover"),
        ("/ui/requests", "Requests"), ("/ui/bootstrap", "Bootstrap")]
 PEER_PAGE = 50
+FAILOVER_ERRORS = {
+    "not_pending": "This proposal was already decided.", "expired": "This proposal has expired.",
+    "stale": "The fleet changed since this proposal was made; wait for a new one.",
+    "no_candidate": "No healthy candidate node is available right now.", "not_found": "Proposal not found.",
+}
 LIST_PAGE = 50
 FAILOVER_STATES = ("pending", "executed", "rejected", "expired", "cancelled", "failed")
 REQUEST_STATES = ("pending", "approved", "declined")
@@ -320,7 +325,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         _, error = run(ops.failover, proposal_id, action, "web", info.username[:64])
         if not error:
             audit(f"web.failover_{action}", info, {"proposal_id": proposal_id})
-        return refreshed(request, info, error)
+        return refreshed(request, info, FAILOVER_ERRORS.get(error, error))
 
     @app.post("/ui/failovers/{proposal_id}/confirm", include_in_schema=False)
     def failover_confirm(proposal_id: int, request: Request):

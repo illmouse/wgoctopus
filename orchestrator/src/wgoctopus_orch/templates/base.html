@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}wgoctopus{% endblock %}</title>
   {% if info %}<meta name="csrf-token" content="{{ info.csrf }}">{% endif %}
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/app.js" defer></script>

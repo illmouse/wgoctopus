@@ -1,0 +1,19 @@
+# Demo fleet for the local UI stand. Addresses are documentation ranges; nothing here is reachable.
+version: 1
+instances:
+  - {name: awg-main, listen_port: 51820, address: 10.20.0.1/24, awg_version: "3.1", cps_profile: quic_initial, mtu: 1280, endpoint_host: vpn.example.org}
+  - {name: awg-small, listen_port: 51821, address: 10.21.0.1/29, endpoint_host: vpn2.example.org}
+nodes:
+  - {name: node-a, ssh: {host: 127.0.0.1, user: root}, agent_port: 1, backend_ip: 203.0.113.10, agent_token: {env: STAND_AGENT_TOKEN}}
+  - {name: node-b, ssh: {host: 127.0.0.1, user: root}, agent_port: 1, backend_ip: 203.0.113.11, agent_token: {env: STAND_AGENT_TOKEN}}
+  - {name: node-c, ssh: {host: 127.0.0.1, user: root}, agent_port: 1, backend_ip: 203.0.113.12, agent_token: {env: STAND_AGENT_TOKEN}}
+  - {name: hop-1, kind: hop, ssh: {host: 127.0.0.1, user: root}, wan_interface: eth0, hop_ip: 203.0.113.20}
+placements:
+  - {instance: awg-main, node: node-a, role: active}
+  - {instance: awg-main, node: node-b, role: standby}
+  - {instance: awg-main, node: node-c, role: standby}
+  - {instance: awg-small, node: node-b, role: active}
+hop_links:
+  - {hop: hop-1, instance: awg-main}
+users:
+  - {username: admin, role: admin}

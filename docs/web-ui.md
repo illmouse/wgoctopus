@@ -131,3 +131,12 @@ Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bo
 - `GET /ui/requests` (viewer, `?status=pending|approved|declined|all`, default pending, paginated): access and device-limit requests from the bot. Approving or declining creates or changes users, so `POST /ui/requests/{id}/approve` (form field `default_limit`, default 3, `-1` unlimited; ignored for limit requests) and `POST /ui/requests/{id}/decline` are admin-only (`web.request_approve|decline`). Web admins have no Telegram identity, so `admin_id`/`admin_username` stay empty on the request row and the decision is attributed in the audit event. The bot's original Telegram notification messages are not edited.
 - `GET /ui/bootstrap` (viewer): whether a file is configured (base name only), apply-on-start flag and the last apply summary. Admins can run `POST /ui/bootstrap/apply?dry_run=true|false`; it always applies the configured file (the UI never accepts a document) and renders names of created/updated/unchanged/pruned objects, never values. Validation errors list the offending paths. Audited as `web.bootstrap_apply`.
 - The failover, approve/decline and bootstrap operations are shared with `/v1` (`failover_op`, `approve_request`/`decline_request`, `bootstrap_run` in `api.py`).
+
+## Local UI stand
+
+`scripts/ui-stand.sh up` starts the orchestrator from the working tree in Docker on http://127.0.0.1:18080/ with demo data and no real hosts (node agents point at an unreachable address, so provisioning and agent calls fail fast). Accounts: `admin`, `ops` (operator), `view` (viewer), password `stand-password-1`.
+
+- `restart` picks up template and Python changes (the repo is mounted); `reset` then `up` restores the demo data; `logs`, `down`.
+- Data lives in `/tmp/wgoctopus-ui-stand`; override with `UI_STAND_DIR` and `UI_STAND_PORT`.
+- Seeded: 63 peers (more than one page), failover proposals in every state, access and limit requests (one with HTML in the name to check escaping).
+- The failover evaluator cancels seeded pending proposals on its first pass, so `up` tops up two pending ones (`scripts/ui-stand/pending.py`) after startup; the evaluator interval is set to a day to keep them.
