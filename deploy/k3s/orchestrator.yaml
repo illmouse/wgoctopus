@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wgoctopus-data
+  namespace: wgoctopus
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wgoctopus
+  namespace: wgoctopus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wgoctopus
+  template:
+    metadata:
+      labels:
+        app: wgoctopus
+    spec:
+      containers:
+        - name: orchestrator
+          image: ghcr.io/example/wgoctopus-orchestrator:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: WGOCTOPUS_WEB_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator
+                  key: WGOCTOPUS_WEB_ADMIN_PASSWORD
+            - name: WGOCTOPUS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator
+                  key: WGOCTOPUS_API_TOKEN
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/wgoctopus
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wgoctopus-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wgoctopus
+  namespace: wgoctopus
+spec:
+  type: ClusterIP
+  selector:
+    app: wgoctopus
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
