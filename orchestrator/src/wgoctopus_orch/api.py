@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +35,7 @@ from .metrics import render_metrics
 from .models import (
     Event,
     FailoverProposal,
+    FailoverSettings,
     HopLink,
     Instance,
     Node,
@@ -109,7 +111,7 @@ class InstanceIn(Strict):
     obfuscation: dict | None = None
     cps_profile: str | None = Field(default=None, pattern="^(none|quic_initial|tls_client_hello|dns_query|wireguard_noise|sip|random)$")
     intensity: str = Field(default="medium", pattern="^(low|medium|high)$")
-    awg_version: str = Field(default="2.0", pattern="^(2.0|3.0|3.1)$")
+    awg_version: str | None = Field(default=None, pattern="^(2.0|3.0|3.1)$")
     mtu: int | None = Field(default=None, ge=576, le=9000)
     egress_interface: str | None = None
     snat_ip: str | None = None
@@ -117,6 +119,18 @@ class InstanceIn(Strict):
     client_dns: str | None = None
     client_keepalive: int | None = Field(default=None, ge=0, le=65535)
     client_allowed_ips: str | None = None
+class InstanceImportIn(Strict):
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,14}$")
+    config: str = Field(min_length=1)
+    endpoint_host: str | None = None
+    address: str | None = None
+
+    @field_validator("config")
+    @classmethod
+    def enforce_config_size(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 262_144:
+            raise HTTPException(413, "configuration file exceeds 256 KiB")
+        return value
 
 
 class InstancePatch(Strict):
@@ -128,6 +142,65 @@ class InstancePatch(Strict):
     client_dns: str | None = None
     client_keepalive: int | None = Field(default=None, ge=0, le=65535)
     client_allowed_ips: str | None = None
+
+
+class AwgGenerateIn(Strict):
+    awg_version: str = Field(default="3.1", pattern="^(2.0|3.0|3.1)$")
+    mtu: int | None = Field(default=None, ge=576, le=9000)
+    intensity: str = Field(default="medium", pattern="^(low|medium|high)$")
+    mode: str = Field(default="normal", pattern="^(router|extreme|normal)$")
+    junk_level: int | None = Field(default=None, ge=0, le=15)
+    size_class: str | None = Field(default=None, pattern="^(low|med|high)$")
+    s1: int | None = Field(default=None, ge=1, le=150)
+    s2: int | None = Field(default=None, ge=1, le=150)
+    s3: int | None = Field(default=None, ge=1, le=64)
+    s4: int | None = Field(default=None, ge=1, le=32)
+    narrow_h: bool = False
+    header_protection: bool | None = None
+    content_padding: bool | None = None
+    random_timings: bool = True
+    random_trailers: bool | None = None
+    disable_cookies: bool = False
+    disable_h: bool = False
+    unite_s: bool = False
+    mimic_profile: str = Field(default="none", pattern="^(quic_initial|quic_0rtt|tls_client_hello|dtls_1_2|dtls_1_3|http3|dns_query|wireguard_noise|sip|stun|random|none)$")
+    mimic_host: str | None = Field(default=None, max_length=253, pattern=r"^[A-Za-z0-9.-]+$")
+    version: str | None = Field(default=None, pattern="^(2.0|3.0|3.1)$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def version_alias(cls, values):
+        if isinstance(values, dict) and values.get("version") is not None:
+            values = dict(values)
+            if "awg_version" in values and values["awg_version"] != values["version"]:
+                raise ValueError("version and awg_version must match")
+            values["awg_version"] = values.pop("version")
+        return values
+
+
+class AwgValidateIn(Strict):
+    awg_version: str = Field(default="3.1", pattern="^(2.0|3.0|3.1)$")
+    mtu: int = Field(default=1280, ge=576, le=9000)
+    obfuscation: dict
+    version: str | None = Field(default=None, pattern="^(2.0|3.0|3.1)$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def version_alias(cls, values):
+        if isinstance(values, dict) and values.get("version") is not None:
+            values = dict(values)
+            if "awg_version" in values and values["awg_version"] != values["version"]:
+                raise ValueError("version and awg_version must match")
+            values["awg_version"] = values.pop("version")
+        return values
+
+
+class InstanceObfuscationPatch(Strict):
+    obfuscation: dict | None = None
+    awg_version: str | None = Field(default=None, pattern="^(2.0|3.0|3.1)$")
+    mtu: int | None = Field(default=None, ge=576, le=9000)
+    intensity: str = Field(default="medium", pattern="^(low|medium|high)$")
+    confirm_break_clients: StrictBool = False
 
 
 class PlacementIn(Strict):
@@ -305,6 +378,55 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     cipher = crypto or Crypto()
     enabled = os.getenv("WGOCTOPUS_RECONCILER_ENABLED", "true").lower() == "true"
     alert_settings = Settings.from_env()
+    failover_env = {
+        "mode": "WGOCTOPUS_FAILOVER_MODE",
+        "down_seconds": "WGOCTOPUS_FAILOVER_DOWN_SECONDS",
+        "proposal_ttl_seconds": "WGOCTOPUS_FAILOVER_PROPOSAL_TTL",
+        "cooldown_seconds": "WGOCTOPUS_FAILOVER_COOLDOWN",
+        "eval_interval": "WGOCTOPUS_FAILOVER_EVAL_INTERVAL",
+    }
+
+    def effective_failover_settings(session=None):
+        if session is None:
+            with sessions() as db_session:
+                row = db_session.get(FailoverSettings, 1)
+                stored = {key: getattr(row, key) for key in failover_env} if row else {}
+        else:
+            row = session.get(FailoverSettings, 1)
+            stored = {key: getattr(row, key) for key in failover_env} if row else {}
+        configured = {
+            "mode": alert_settings.failover_mode,
+            "down_seconds": alert_settings.failover_down_seconds,
+            "proposal_ttl_seconds": alert_settings.failover_proposal_ttl_seconds,
+            "cooldown_seconds": alert_settings.failover_cooldown_seconds,
+            "eval_interval": alert_settings.failover_eval_interval,
+        }
+        for key, env_name in failover_env.items():
+            if env_name not in os.environ:
+                configured[key] = stored.get(key, configured[key])
+        return configured
+
+    def failover_settings_view():
+        values = effective_failover_settings()
+        return values | {
+            "enabled": values["mode"] != "off",
+            "locked": {key: env_name in os.environ for key, env_name in failover_env.items()},
+        }
+
+    def save_failover_settings(values):
+        with sessions.begin() as session:
+            row = session.get(FailoverSettings, 1)
+            editable = {key: value for key, value in values.items() if failover_env[key] not in os.environ}
+            if row is None:
+                row = FailoverSettings(id=1, **{
+                    "mode": "confirm", "down_seconds": 120, "proposal_ttl_seconds": 900,
+                    "cooldown_seconds": 600, "eval_interval": 15, **editable,
+                })
+                session.add(row)
+            else:
+                for key, value in editable.items():
+                    setattr(row, key, value)
+        return failover_settings_view()
     if alert_settings.web_enabled:
         app_web_sessions = webauth.SessionStore(sessions, ttl_seconds=alert_settings.web_session_ttl, idle_seconds=alert_settings.web_session_idle)
         app_web_throttle = webauth.LoginThrottle()
@@ -376,17 +498,24 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
             task = asyncio.create_task(app.state.reconciler.run(stop)) if app.state.reconciler else None
             alert_task = asyncio.create_task(app.state.alerts.run(stop)) if app.state.alerts else None
             app.state.failover = failover
-            if app.state.failover is None and alert_settings.failover_mode != "off" and app.state.reconciler:
+            if app.state.failover is None and app.state.reconciler:
                 app.state.failover = build_failover(sessions, app.state.reconciler, alert_settings,
                     on_executed=lambda instance_id, node_id: kick_for_failover(instance_id, node_id))
             async def failover_loop():
                 while not stop.is_set():
                     try:
+                        values = effective_failover_settings()
+                        app.state.failover.settings = replace(
+                            alert_settings, failover_mode=values["mode"],
+                            failover_down_seconds=values["down_seconds"],
+                            failover_proposal_ttl_seconds=values["proposal_ttl_seconds"],
+                            failover_cooldown_seconds=values["cooldown_seconds"],
+                            failover_eval_interval=values["eval_interval"])
                         await asyncio.to_thread(app.state.failover.evaluate_once)
                     except Exception as exc:
                         log.error("Failover evaluation failed (%s)", type(exc).__name__)
                     try:
-                        await asyncio.wait_for(stop.wait(), timeout=alert_settings.failover_eval_interval)
+                        await asyncio.wait_for(stop.wait(), timeout=effective_failover_settings()["eval_interval"])
                     except TimeoutError:
                         pass
             failover_task = asyncio.create_task(failover_loop()) if app.state.failover else None
@@ -577,10 +706,14 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 return account_json(webauth.create_account(s, body.get("username"), body.get("password"), body.get("role"), body.get("source", "local")))
             except webauth.WebAuthError as exc: web_error(exc)
 
-        @app.patch("/v1/web-accounts/{username}", dependencies=[Depends(account_admin)])
-        def web_account_patch(username: str, body: dict, s: Session = Depends(db)):
+        @app.patch("/v1/web-accounts/{username}")
+        def web_account_patch(username: str, body: dict, info=Depends(account_admin), s: Session = Depends(db)):
             account = s.scalar(select(WebAccount).where(WebAccount.username == username.lower()))
             if not account: raise HTTPException(404, detail={"error": "not_found"})
+            if info is not None and account.id == info.account_id and (
+                body.get("role") is not None and body["role"] != "admin" or body.get("enabled") is False
+            ):
+                raise HTTPException(403, detail={"error": "self_account"})
             try:
                 if body.get("password") is not None: webauth.set_password(s, account, body["password"])
                 if body.get("role") is not None: webauth.set_role(s, account, body["role"])
@@ -589,10 +722,12 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                 return account_json(account)
             except webauth.WebAuthError as exc: web_error(exc)
 
-        @app.delete("/v1/web-accounts/{username}", dependencies=[Depends(account_admin)], status_code=204)
-        def web_account_delete(username: str, s: Session = Depends(db)):
+        @app.delete("/v1/web-accounts/{username}", status_code=204)
+        def web_account_delete(username: str, info=Depends(account_admin), s: Session = Depends(db)):
             account = s.scalar(select(WebAccount).where(WebAccount.username == username.lower()))
             if not account: raise HTTPException(404, detail={"error": "not_found"})
+            if info is not None and account.id == info.account_id:
+                raise HTTPException(403, detail={"error": "self_account"})
             try: webauth.delete_account(s, account)
             except webauth.WebAuthError as exc: web_error(exc)
 
@@ -689,7 +824,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
 
     @app.get("/v1/failover", dependencies=[Depends(auth)])
     def failover_settings():
-        return {"mode": alert_settings.failover_mode, "enabled": alert_settings.failover_mode != "off", "down_seconds": alert_settings.failover_down_seconds, "proposal_ttl_seconds": alert_settings.failover_proposal_ttl_seconds, "cooldown_seconds": alert_settings.failover_cooldown_seconds, "eval_interval": alert_settings.failover_eval_interval}
+        values = effective_failover_settings()
+        return values | {"enabled": values["mode"] != "off"}
 
     @app.get("/v1/failovers", dependencies=[Depends(auth)])
     def list_failovers(state: str | None = Query(None, pattern="^(pending|executed|rejected|expired|cancelled|failed)$"), instance_id: int | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), s: Session = Depends(db)):
@@ -727,7 +863,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         return rows, total
 
     def failover_info():
-        return failover_settings() | {"active": app.state.failover is not None}
+        return failover_settings_view() | {"active": app.state.failover is not None}
 
     @app.post("/v1/failovers/{ident}/confirm", dependencies=[Depends(auth)])
     def confirm_failover(ident: int, decision: dict | None = Body(None)): return decide(ident, "confirm", decision or {})
@@ -744,7 +880,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         return dict(id=i.id, name=i.name, listen_port=i.listen_port, address=i.address, public_key=i.public_key,
                     obfuscation={**{k:v for k,v in i.obfuscation.items() if k != "header_protection_key"},
                                  **({"header_protection_key_set": True} if i.obfuscation.get("header_protection_key") else {})},
-                    mtu=i.mtu, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
+                    mtu=i.mtu, awg_version=i.awg_version, egress_interface=i.egress_interface, snat_ip=i.snat_ip,
                     endpoint_host=i.endpoint_host, client_dns=i.client_dns,
                     client_keepalive=i.client_keepalive, client_allowed_ips=i.client_allowed_ips,
                      placements=[dict(node_id=p.node_id, role=p.role, weight=p.weight) for p in placements],
@@ -810,14 +946,198 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     @app.post("/v1/instances", dependencies=[Depends(auth)], status_code=201)
     def create_instance(body: InstanceIn, s: Session=Depends(db)):
         try:
+            awg_version = body.awg_version or (
+                "3.1" if body.obfuscation is not None and any(key in body.obfuscation for key in (
+                    "header_protection_key", "content_padding_addition", "rekey_after_time",
+                    "rekey_timeout", "reject_after_time", "keepalive_timeout",
+                    "max_handshake_attempts", "random_trailers", "disable_cookies",
+                )) else "2.0" if body.obfuscation is not None else "3.1"
+            )
             instance = service.create_instance(s, body.name, body.listen_port, body.address,
                 obfuscation=body.obfuscation, mtu=body.mtu, cps_profile=body.cps_profile,
                 intensity=body.intensity, egress_interface=body.egress_interface,
                 snat_ip=body.snat_ip, endpoint_host=body.endpoint_host, client_dns=body.client_dns,
                 client_keepalive=body.client_keepalive, client_allowed_ips=body.client_allowed_ips,
-                crypto=cipher, awg_version=body.awg_version)
+                crypto=cipher, awg_version=awg_version)
         except ValueError:
             raise HTTPException(422, "invalid instance parameters") from None
+        return inst(instance, s)
+
+    @app.post("/v1/instances/import", dependencies=[Depends(auth)], status_code=201)
+    async def import_instance(request: Request, s: Session = Depends(db)):
+        from .importer import ImportFailure, parse_server_conf, validate_parsed
+        try:
+            if request.headers.get("content-type", "").startswith("multipart/form-data"):
+                from starlette.formparsers import MultiPartException, MultiPartParser
+
+                max_body = 262_144 + 16_384
+                if int(request.headers.get("content-length", "0") or 0) > max_body:
+                    raise HTTPException(413, "request body exceeds the upload limit")
+                received = 0
+
+                async def bounded_stream():
+                    nonlocal received
+                    async for chunk in request.stream():
+                        received += len(chunk)
+                        if received > max_body:
+                            raise MultiPartException("request body exceeds the upload limit")
+                        yield chunk
+
+                try:
+                    form = await MultiPartParser(
+                        request.headers, bounded_stream(), max_files=1, max_fields=8
+                    ).parse()
+                except MultiPartException:
+                    raise HTTPException(413, "request body exceeds the upload limit") from None
+                try:
+                    upload = form.get("file") or form.get("config")
+                    raw = await upload.read(262_145) if hasattr(upload, "read") else str(upload or "").encode()
+                    if len(raw) > 262_144:
+                        raise HTTPException(413, "configuration file exceeds 256 KiB")
+                    body = InstanceImportIn.model_validate({
+                        "name": form.get("name"), "config": raw.decode("utf-8"),
+                        "endpoint_host": form.get("endpoint_host"), "address": form.get("address"),
+                    })
+                finally:
+                    await form.close()
+            else:
+                body = InstanceImportIn.model_validate(await request.json())
+            parsed = parse_server_conf(body.config)
+            if body.address:
+                parsed.address = body.address
+            problems = validate_parsed(parsed)
+            if problems:
+                raise ImportFailure("INVALID_CONFIG")
+            instance = service.create_instance(
+                s, body.name, parsed.listen_port, parsed.address,
+                private_key=parsed.private_key, obfuscation=service.complete_import_obfuscation(
+                    parsed.obfuscation, parsed.mtu, parsed.awg_version
+                ) or None,
+                mtu=parsed.mtu, endpoint_host=body.endpoint_host or parsed.endpoint_host,
+                client_dns=", ".join(parsed.client_dns) if parsed.client_dns else None,
+                client_keepalive=parsed.client_keepalive,
+                client_allowed_ips=", ".join(parsed.client_allowed_ips) if parsed.client_allowed_ips else None,
+                crypto=cipher, awg_version=parsed.awg_version,
+            )
+            for peer in parsed.peers:
+                service.import_peer(s, instance.id, peer.name, public_key=peer.public_key,
+                                    private_key=peer.private_key, preshared_key=peer.preshared_key,
+                                    allowed_ip=peer.allowed_ip, enabled=peer.enabled,
+                                    owner=peer.owner, crypto=cipher)
+        except HTTPException:
+            raise
+        except (ImportFailure, ValueError, UnicodeDecodeError):
+            raise HTTPException(422, "invalid server configuration") from None
+        except IntegrityError:
+            s.rollback()
+            raise HTTPException(409, "instance conflicts with existing data") from None
+        response = inst(instance, s)
+        response["warnings"] = [dict(code=warning.code, count=warning.count) for warning in parsed.warnings]
+        return response
+
+    @app.post("/v1/awg/generate", dependencies=[Depends(auth)])
+    def generate_awg(body: AwgGenerateIn):
+        from .awgparams import generate_obfuscation, validate_obfuscation
+        mtu = body.mtu or (1280 if body.awg_version in ("3.0", "3.1") else 1500)
+        fixed_s = {f"s{i}": getattr(body, f"s{i}") for i in range(1, 5) if getattr(body, f"s{i}") is not None}
+        values = generate_obfuscation(
+            body.awg_version, mtu, body.intensity, mode=body.mode, junk_level=body.junk_level,
+            size_class=body.size_class, fixed_s=fixed_s, narrow_h=body.narrow_h,
+            header_protection=body.header_protection, content_padding=body.content_padding,
+            random_timings=body.random_timings, random_trailers=body.random_trailers,
+            disable_cookies=body.disable_cookies, disable_h=body.disable_h, unite_s=body.unite_s,
+        )
+        if body.mimic_profile != "none":
+            from .awgcps import generate_cps
+            values.update(generate_cps(body.mimic_profile, mtu=mtu, intensity=body.intensity, host=body.mimic_host))
+        errors = validate_obfuscation(values, mtu=mtu, version=body.awg_version)
+        from .awgcps import validate_cps_chain
+        errors += validate_cps_chain({f"i{i}": values.get(f"i{i}", "") for i in range(1, 6)})
+        warnings = []
+        collision_errors = [error for error in errors if "S collision" in error or "padded S sizes overlap" in error]
+        if body.awg_version in ("2.0", "3.0", "3.1") and collision_errors:
+            warnings.append("s1-s4: specified S values collide; adjust them to avoid packet size collisions")
+            errors = [error for error in errors if error not in collision_errors]
+        if body.random_trailers is True and body.awg_version != "3.1":
+            warnings.append(f"random_trailers: not supported by AWG {body.awg_version}; requested setting was omitted")
+        if values.get("random_trailers") and any(
+            int(values[f"h{i}"].split("-")[-1]) - int(values[f"h{i}"].split("-")[0]) > 10_000
+            for i in range(1, 4)
+        ):
+            warnings.append("random_trailers: h1-h3 ranges wider than 10000 may cause packet loss; use narrow H ranges")
+        if ((body.random_trailers is not None or body.disable_cookies)
+                and values.get("random_trailers", False) != values.get("disable_cookies", False)):
+            warnings.append("random_trailers and disable_cookies are usually enabled together")
+        findings = [{"severity": level, "level": level, "field": e.split(":", 1)[0] if ":" in e else "", "message": e}
+                    for level, messages in (("error", errors), ("warning", warnings)) for e in messages]
+        return {"obfuscation": values, "findings": findings}
+
+    @app.post("/v1/awg/validate", dependencies=[Depends(auth)])
+    def validate_awg(body: AwgValidateIn):
+        from .awgparams import validate_obfuscation
+        if not isinstance(body.obfuscation, dict) or any(
+            not isinstance(key, str) or not isinstance(value, (str, int, bool))
+            for key, value in body.obfuscation.items()
+        ):
+            return JSONResponse(status_code=422, content={"findings": [{"severity": "error", "level": "error", "field": "obfuscation", "message": "obfuscation must be an object of scalar values"}]})
+        errors = validate_obfuscation(
+            body.obfuscation, mtu=body.mtu, version=body.awg_version
+        )
+        collision_errors = [error for error in errors if "S collision" in error or "padded S sizes overlap" in error]
+        warnings = []
+        if body.awg_version in ("2.0", "3.0", "3.1") and collision_errors:
+            warnings.append("s1-s4: S values collide; adjust them to avoid packet size collisions")
+            errors = [error for error in errors if error not in collision_errors]
+        from .awgcps import validate_cps_chain
+        chain = {f"i{i}": body.obfuscation.get(f"i{i}", "") for i in range(1, 6)}
+        for key, value in chain.items():
+            if not isinstance(value, str):
+                errors.append(f"{key}: must be a string")
+        errors += validate_cps_chain({key: value for key, value in chain.items() if isinstance(value, str)})
+        findings = [{"severity": "error", "level": "error", "field": e.split(":", 1)[0] if ":" in e else "", "message": e} for e in errors]
+        findings.extend({"severity": "warning", "level": "warning", "field": "s1-s4", "message": warning} for warning in warnings)
+        if ("random_trailers" in body.obfuscation and "disable_cookies" in body.obfuscation
+                and body.obfuscation["random_trailers"] != body.obfuscation["disable_cookies"]):
+            findings.append({"severity": "warning", "level": "warning", "field": "random_trailers", "message": "random_trailers and disable_cookies are usually enabled together"})
+        if body.obfuscation.get("random_trailers") and any(
+            isinstance(body.obfuscation.get(f"h{i}"), str)
+            and len(parts := body.obfuscation[f"h{i}"].split("-")) in (1, 2)
+            and all(part.isdigit() for part in parts)
+            and int(parts[-1]) - int(parts[0]) > 10_000
+            for i in range(1, 4)
+        ):
+            findings.append({"severity": "warning", "level": "warning", "field": "random_trailers",
+                             "message": "random_trailers: h1-h3 ranges wider than 10000 may cause packet loss; use narrow H ranges"})
+        return {"findings": findings}
+
+    @app.patch("/v1/instances/{ident}/obfuscation", dependencies=[Depends(auth)])
+    def patch_obfuscation(ident: int, body: InstanceObfuscationPatch, s: Session = Depends(db)):
+        if not body.confirm_break_clients:
+            raise HTTPException(409, "confirm_break_clients is required; connected clients will lose connectivity")
+        instance = s.get(Instance, ident)
+        if not instance:
+            raise HTTPException(404, "unknown instance")
+        from .awgparams import generate_obfuscation, validate_obfuscation
+        awg_version = body.awg_version or instance.awg_version
+        mtu = body.mtu or instance.mtu or (1280 if awg_version in ("3.0", "3.1") else 1500)
+        mtu_changed = mtu != instance.mtu
+        values = body.obfuscation or generate_obfuscation(awg_version, mtu, body.intensity)
+        errors = validate_obfuscation(values, mtu=mtu, version=awg_version)
+        from .awgcps import validate_cps_chain
+        errors += validate_cps_chain({k: v for k, v in values.items() if k in {f"i{i}" for i in range(1, 6)}})
+        if errors:
+            raise HTTPException(422, "invalid obfuscation parameters")
+        instance.obfuscation = values
+        instance.awg_version = awg_version
+        instance.mtu = mtu
+        nodes = placed_nodes(s, ident)
+        s.flush()
+        for node_id in nodes:
+            service.bump_revision(s, node_id, cipher)
+        service._event(s, "instance.obfuscation.updated", str(ident), {"awg_version": awg_version})
+        if mtu_changed:
+            service._bump_probe_runners(s, instance_id=ident, crypto=cipher)
+        kick(s, nodes)
         return inst(instance, s)
 
     @app.get("/v1/instances", dependencies=[Depends(auth)])
@@ -1090,6 +1410,7 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
     def peer_config_op(s,ident,endpoint_host=None,actor=None):
         p=s.get(Peer, ident)
         if not p or p.owner == service.PROBE_OWNER: raise HTTPException(404,"unknown peer")
+        if not p.private_key_enc: raise HTTPException(422,"peer has no client private key; client config cannot be rendered")
         instance=s.get(Instance,p.instance_id)
         endpoint_host=instance.endpoint_host or endpoint_host or os.getenv("WGOCTOPUS_CLIENT_ENDPOINT_HOST")
         if not endpoint_host: raise HTTPException(422,"endpoint_host is required")
@@ -1217,7 +1538,9 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                                         decline=decline_op, bootstrap=bootstrap_file_op),
                     failovers=failovers_page, failover_info=failover_info, requests=requests_page,
                     bootstrap_info=lambda: dict(bootstrap_status(), configured_apply=alert_settings.bootstrap_apply),
-                    crypto=cipher, kick=lambda ids: kick(None, ids))
+                    save_failover_settings=save_failover_settings,
+                    crypto=cipher, kick=lambda ids: kick(None, ids),
+                    revoke_account=app_web_sessions.revoke_account)
 
     def user_json(u, s):
         return dict(username=u.username, tg_id=u.tg_id, role=u.role, config_limit=u.config_limit,

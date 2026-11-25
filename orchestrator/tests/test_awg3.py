@@ -27,6 +27,15 @@ def test_awg3_generation_and_validation():
     assert not set(legacy) & {"header_protection_key", "random_trailers", "rekey_timeout"}
 
 
+def test_narrow_h_limits_each_header_range_width():
+    for seed in range(40):
+        result = generate_obfuscation("3.1", narrow_h=True, rnd=random.Random(seed).randint)
+        assert all(
+            int(result[f"h{i}"].split("-")[1]) - int(result[f"h{i}"].split("-")[0]) <= 10_000
+            for i in range(1, 5)
+        )
+
+
 def test_awg31_api_render_config_and_key_redaction(api, crypto):
     client, sessions, _reconciler, _ = api
     response = client.post("/v1/instances", json={"name": "awg31", "listen_port": 51981,

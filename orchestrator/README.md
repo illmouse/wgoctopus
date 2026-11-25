@@ -16,7 +16,7 @@ Run `make orch-test` (Docker, Python 3.12, migrations and coverage) and `make or
 
 Alerts: `WGOCTOPUS_TELEGRAM_TOKEN` or `_FILE` (file takes precedence), `WGOCTOPUS_TELEGRAM_CHAT_ID`, `WGOCTOPUS_TELEGRAM_API_BASE` (default `https://api.telegram.org`), `WGOCTOPUS_ALERTS_ENABLED` (`auto`), `WGOCTOPUS_ALERT_DELAY_SECONDS` (60), `WGOCTOPUS_ALERT_MAX_PER_MINUTE` (20), `WGOCTOPUS_ALERT_POLL_SECONDS` (5), and `WGOCTOPUS_ALERT_KINDS` (empty uses defaults).
 
-Failover settings: `WGOCTOPUS_FAILOVER_MODE` (`confirm`; `off`, `confirm`, or `auto`), `WGOCTOPUS_FAILOVER_DOWN_SECONDS` (120), `WGOCTOPUS_FAILOVER_PROPOSAL_TTL` (900), `WGOCTOPUS_FAILOVER_COOLDOWN` (600), and `WGOCTOPUS_FAILOVER_EVAL_INTERVAL` (15 seconds; lifecycle wiring comes in the next stage).
+Failover settings can be changed on the Failover page and persist in the database. Environment variables override and lock their corresponding UI fields: `WGOCTOPUS_FAILOVER_MODE` (`confirm`; `off`, `confirm`, or `auto`), `WGOCTOPUS_FAILOVER_DOWN_SECONDS` (120), `WGOCTOPUS_FAILOVER_PROPOSAL_TTL` (900), `WGOCTOPUS_FAILOVER_COOLDOWN` (600), and `WGOCTOPUS_FAILOVER_EVAL_INTERVAL` (15). UI ranges are 1–86400, 1–604800, 0–86400, and 1–3600 seconds for the four timers, respectively.
 
 - `WGOCTOPUS_DATABASE_URL` (default `sqlite:///./wgoctopus.db`).
 - `WGOCTOPUS_MASTER_KEY` (URL-safe base64 Fernet key) or `WGOCTOPUS_MASTER_KEY_FILE`; one is required before encryption/decryption.

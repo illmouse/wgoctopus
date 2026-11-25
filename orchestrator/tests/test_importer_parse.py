@@ -39,6 +39,67 @@ def test_missing_and_bad_amnezia(tmp_path):
         importer.parse_amnezia(tmp_path)
 
 
+def test_server_conf_import_preserves_peer_names_and_awg_fields():
+    from wgoctopus_orch.keys import generate_keypair
+
+    private, public = generate_keypair()
+    conf = f"""[Interface]
+PrivateKey = {private}
+Address = 10.0.0.1/24
+ListenPort = 51820
+Jc = 4
+Jmin = 40
+Jmax = 80
+S1 = 12
+S2 = 12
+S3 = 12
+S4 = 12
+H1 = 100-200
+I1 = <b 0x01>
+HeaderProtectionKey = YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+ContentPaddingAddition = 1-3
+RekeyAfterTime = 60
+RandomTrailers = 1
+DisableCookies = off
+PostUp = ignored
+PostDown = ignored
+
+[Peer]
+# Name = Primary
+PublicKey = {public}
+AllowedIPs = 10.0.0.2/32
+"""
+    parsed = importer.parse_server_conf(conf)
+    assert parsed.peers[0].name == "Primary"
+    assert parsed.obfuscation == {
+        "jc": "4", "jmin": "40", "jmax": "80", "s1": "12", "s2": "12",
+        "s3": "12", "s4": "12", "h1": "100-200",
+        "i1": "<b 0x01>", "header_protection_key": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+        "content_padding_addition": "1-3", "rekey_after_time": "60",
+        "random_trailers": True, "disable_cookies": False,
+    }
+    assert parsed.awg_version == "3.1"
+    assert not importer.validate_parsed(parsed)
+
+
+def test_server_conf_generates_missing_private_key_with_warning():
+    conf = "[Interface]\nAddress=10.0.0.1/24\nListenPort=51820\nPostUp=ignored\n"
+    parsed = importer.parse_server_conf(conf)
+    assert parsed.private_key and parsed.public_key
+    assert parsed.warnings == [importer.Warning("PRIVATE_KEY_GENERATED", 1)]
+    assert parsed.awg_version == "2.0"
+
+
+def test_server_conf_imports_mtu_dns_and_endpoint():
+    parsed = importer.parse_server_conf(
+        "[Interface]\nAddress=10.0.0.1/24\nListenPort=51820\n"
+        "MTU=1380\nDNS=1.1.1.1, 8.8.8.8\nEndpoint=edge.example:51820\n"
+    )
+    assert parsed.mtu == 1380
+    assert parsed.client_dns == ["1.1.1.1", "8.8.8.8"]
+    assert parsed.endpoint_host == "edge.example:51820"
+
+
 def test_validation_is_value_free_and_collects_findings():
     parsed = importer.ParsedInstance("test", 1, "bad-address", "", "", {
         "i1": "<c>xx", "jmin": 8, "jmax": 2,

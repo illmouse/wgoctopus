@@ -9,7 +9,7 @@ import secrets
 import struct
 from collections.abc import Callable
 
-PROFILES = ("quic_initial", "tls_client_hello", "dns_query", "wireguard_noise", "sip", "random", "none")
+PROFILES = ("quic_initial", "quic_0rtt", "tls_client_hello", "dtls_1_2", "dtls_1_3", "http3", "dns_query", "wireguard_noise", "sip", "stun", "random", "none")
 SNI_HOSTS = ("www.google.com", "www.youtube.com", "www.facebook.com", "www.amazon.com", "www.microsoft.com", "www.apple.com", "www.wikipedia.org", "www.reddit.com", "www.cloudflare.com", "www.instagram.com", "www.linkedin.com", "www.netflix.com", "www.github.com", "www.dropbox.com", "www.yahoo.com", "www.bing.com", "www.mozilla.org", "www.wordpress.com", "www.twitch.tv", "www.spotify.com", "www.paypal.com", "www.ebay.com", "www.nytimes.com", "www.cnn.com", "www.bbc.com", "www.adobe.com", "www.salesforce.com", "www.zoom.us", "www.slack.com", "www.telegram.org", "www.whatsapp.com", "www.booking.com", "www.airbnb.com", "www.shopify.com", "www.oracle.com", "www.ibm.com", "www.intel.com", "www.nvidia.com", "www.tesla.com", "www.gov.uk")
 KMOD_CHAIN_BUDGET = 3200
 _TAG = re.compile(r"<(b 0x[0-9a-fA-F]*|t|c|r \d+|rc \d+|rd \d+|d|ds|dz)>")
@@ -43,6 +43,44 @@ def _quic(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
     return _blob(packet) + f"<rc {len(dcid)}>" + tags
 
 
+def _quic_0rtt(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
+    """A QUIC 0-RTT long-header packet with a STREAM frame payload."""
+    pn = rnd(1, 4)
+    dcid, scid = rb(rnd(8, 20)), rb(rnd(0, 20))
+    payload = b"\x0e" + _varint(0) + _varint(6) + b"GET / "
+    prefix = (b"\xd0" + b"\0\0\0\1" + bytes([len(dcid)]) + dcid
+              + bytes([len(scid)]) + scid)
+    packet = prefix + _varint(len(payload) + pn) + rb(pn) + payload
+    return _blob(packet) + f"<rc {len(dcid)}><t>"
+
+
+def _dtls(rnd: Rnd, rb: Callable[[int], bytes], version: bytes) -> str:
+    """A DTLS handshake record containing a structurally valid ClientHello."""
+    body = (version + rb(32) + b"\0\0" + b"\0\2\0\x2f" +
+            b"\x01\0" + b"\0\0")
+    hello = (b"\x01" + len(body).to_bytes(3, "big") + b"\0\0" +
+             b"\0\0\0" + len(body).to_bytes(3, "big") + body)
+    record = b"\x16" + version + rb(8) + b"\0\0" + len(hello).to_bytes(2, "big") + hello
+    return _blob(record) + f"<t><r {rnd(4, 32)}>"
+
+
+def _http3(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
+    """HTTP/3 control stream SETTINGS carried in a QUIC Initial packet."""
+    pn = 1
+    dcid = rb(8)
+    # STREAM frame (type 0x08), stream 2, offset 0, SETTINGS frame (0x04).
+    stream = b"\x08\x02\x00\x04\x04\x02\x40\x01"
+    prefix = b"\xc0\0\0\0\1" + bytes([len(dcid)]) + dcid + b"\0"
+    packet = prefix + _varint(len(stream) + pn) + b"\0" + stream
+    return _blob(packet) + f"<rc {len(dcid)}><t><r {max(0, min(64, mtu - len(packet)))}>"
+
+
+def _stun(rnd: Rnd, rb: Callable[[int], bytes]) -> str:
+    """STUN Binding request with magic cookie and a transaction identifier."""
+    packet = b"\0\x01\0\0\x21\x12\xa4\x42" + rb(12)
+    return _blob(packet) + "<t><r 4>"
+
+
 def _tls(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
     pad = max(0, min(256, mtu - 100))
     hello = b"\x01\x00\x00\x2f\x03\x03" + _bytes(32, rb)
@@ -50,8 +88,8 @@ def _tls(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
     return _blob(record) + f"<rc {rnd(8, 20)}><r {pad}><t>"
 
 
-def _dns(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
-    host = SNI_HOSTS[rnd(0, len(SNI_HOSTS) - 1)]
+def _dns(rnd: Rnd, rb: Callable[[int], bytes], mtu: int, host: str | None = None) -> str:
+    host = host or SNI_HOSTS[rnd(0, len(SNI_HOSTS) - 1)]
     qname = b"".join(bytes([len(x)]) + x.encode() for x in host.split(".")) + b"\0"
     ident = _bytes(2, rb)
     packet = ident + b"\x01\x00\0\1\0\0\0\0\0\1" + qname + b"\0\1\0\1" + b"\0\0)\x04\xd0\0\0\0\0\0\0"
@@ -63,8 +101,8 @@ def _noise(rnd: Rnd, rb: Callable[[int], bytes]) -> str:
     return "".join(_blob(b) for b in blobs) + f"<r {rnd(4, 64)}><t><rc {rnd(8, 20)}>"
 
 
-def _sip(rnd: Rnd, rb: Callable[[int], bytes], mtu: int) -> str:
-    host = SNI_HOSTS[rnd(0, len(SNI_HOSTS) - 1)]
+def _sip(rnd: Rnd, rb: Callable[[int], bytes], mtu: int, host: str | None = None) -> str:
+    host = host or SNI_HOSTS[rnd(0, len(SNI_HOSTS) - 1)]
     branch = "z9hG4bK" + rb(8).hex()
     request = f"REGISTER sip:{host} SIP/2.0\r\nVia: SIP/2.0/UDP {host};branch={branch}\r\nFrom: <sip:user@{host}>\r\nTo: <sip:user@{host}>\r\nCall-ID: {rb(12).hex()}\r\nCSeq: 1 REGISTER\r\nMax-Forwards: 70\r\nContent-Length: 0\r\n\r\n"
     raw = request.encode()
@@ -96,14 +134,18 @@ def _cost(value: str) -> int:
     return 4 + ((size + len(value.encode()) * 0 + 1 + 3) // 4) * 4 if value else 0
 
 
-def generate_cps(profile: str = "quic_initial", *, mtu: int = 1500, intensity: str = "medium", rnd=None, rand_bytes=None, use_tag_c: bool = False, mimic_all: bool = False) -> dict[str, str]:
+def generate_cps(profile: str = "quic_initial", *, mtu: int = 1500, intensity: str = "medium", rnd=None, rand_bytes=None, use_tag_c: bool = False, mimic_all: bool = False, host: str | None = None) -> dict[str, str]:
     """Generate I1-I5 CPS tags using injectable inclusive RNG and byte source."""
     rnd = rnd or secrets.randbelow
     if rnd is secrets.randbelow:
         rnd = lambda lo, hi: secrets.randbelow(hi - lo + 1) + lo
     rb = rand_bytes or secrets.token_bytes
     iv = {"low": 1, "medium": 2, "high": 3}.get(intensity, 2)
-    builders = {"quic_initial": _quic, "tls_client_hello": _tls, "dns_query": _dns, "wireguard_noise": _noise, "sip": _sip}
+    builders = {"quic_initial": _quic, "quic_0rtt": _quic_0rtt, "tls_client_hello": _tls,
+                "dtls_1_2": lambda r, b: _dtls(r, b, b"\xfe\xfd"),
+                "dtls_1_3": lambda r, b: _dtls(r, b, b"\xfe\xfc"),
+                "http3": _http3, "dns_query": _dns, "wireguard_noise": _noise,
+                "sip": _sip, "stun": _stun}
     picked = profile
     if profile == "random":
         picked = tuple(builders)[rnd(0, len(builders) - 1)]
@@ -112,7 +154,9 @@ def generate_cps(profile: str = "quic_initial", *, mtu: int = 1500, intensity: s
     if picked not in builders:
         raise ValueError(f"unknown CPS profile: {picked[:80]}")
     def packet(name: str) -> str:
-        return builders[name](rnd, rb, mtu) if name in ("quic_initial", "tls_client_hello", "dns_query", "sip") else builders[name](rnd, rb)
+        if name in ("dns_query", "sip"):
+            return builders[name](rnd, rb, mtu, host)
+        return builders[name](rnd, rb, mtu) if name in ("quic_initial", "quic_0rtt", "tls_client_hello", "http3") else builders[name](rnd, rb)
     chains = [packet(picked)] + [packet(picked) if mimic_all else _entropy(rnd, rb, iv, use_tag_c) for _ in range(4)]
     while sum(map(_cost, chains)) > KMOD_CHAIN_BUDGET:
         slot = next((i for i in range(4, 0, -1) if chains[i]), None)

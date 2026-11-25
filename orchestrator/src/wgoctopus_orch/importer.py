@@ -24,7 +24,7 @@ from .awgparams import validate_3x_fields
 from .config import database_url
 from .crypto import Crypto
 from .db import make_engine, make_session_factory, upgrade_to_head
-from .keys import derive_public
+from .keys import derive_public, generate_keypair
 from .models import Event, Instance, Node, Peer, Placement
 from .renderer import render_node_state
 
@@ -67,6 +67,7 @@ class ParsedInstance:
     client_allowed_ips: list[str] | None = None
     peers: list[ParsedPeer] = field(default_factory=list)
     warnings: list[Warning] = field(default_factory=list)
+    awg_version: str = "2.0"
 
 
 class ImportFailure(ValueError):
@@ -173,6 +174,91 @@ def parse_amnezia(source_dir: str | Path) -> ParsedInstance:
                           client_keepalive=_int_or_none(conf.get("PersistentKeepalive")),
                           client_allowed_ips=_split_list(conf.get("AllowedIPs")),
                           peers=peers)
+
+
+def parse_server_conf(text: str) -> ParsedInstance:
+    """Parse a server-side WireGuard/Amnezia .conf file without retaining client secrets."""
+    sections: list[tuple[str, dict[str, str]]] = []
+    peer_names: dict[int, str] = {}
+    current = None
+    for raw in text.splitlines():
+        comment = raw.strip()
+        if current and current[0] == "peer" and comment.startswith("#"):
+            name = re.fullmatch(r"#\s*_?Name(?:\s*=\s*|\s+)?(.*)", comment, re.IGNORECASE)
+            if name:
+                peer_names[len(sections) - 1] = (name[1] or name[2] or "").strip()
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = (line[1:-1].strip().lower(), {})
+            sections.append(current)
+        elif current and "=" in line:
+            key, value = line.split("=", 1)
+            current[1][key.strip().lower()] = value.strip()
+    interfaces = [values for kind, values in sections if kind == "interface"]
+    if len(interfaces) != 1:
+        raise _failure("BAD_STRUCTURE")
+    interface = interfaces[0]
+    try:
+        private = interface.get("privatekey")
+        generated = not private
+        if generated:
+            private, public = generate_keypair()
+        else:
+            public = derive_public(private)
+        address = interface["address"].split(",", 1)[0].strip()
+        port = int(interface["listenport"])
+        ipaddress.ip_interface(address)
+    except (KeyError, ValueError, TypeError):
+        raise _failure("BAD_STRUCTURE") from None
+    peers = []
+    try:
+        for index, (kind, values) in enumerate(sections):
+            if kind != "peer":
+                continue
+            if values.get("privatekey"):
+                raise _failure("PEER_PRIVATE_KEY_UNSUPPORTED")
+            key = values["publickey"]
+            allowed = values["allowedips"].split(",", 1)[0].strip()
+            peers.append(ParsedPeer(peer_names.get(index) or values.get("name", f"peer-{len(peers)+1}"),
+                                    key, None, values.get("presharedkey"),
+                                    str(ipaddress.ip_interface(allowed).ip), True, None))
+    except (KeyError, ValueError):
+        raise _failure("BAD_STRUCTURE") from None
+    _unique_peers(peers)
+    obfuscation: dict[str, Any] = {}
+    fields = {"jc": "jc", "jmin": "jmin", "jmax": "jmax",
+              **{f"s{i}": f"s{i}" for i in range(1, 5)},
+              **{f"h{i}": f"h{i}" for i in range(1, 5)},
+              **{f"i{i}": f"i{i}" for i in range(1, 6)},
+              "headerprotectionkey": "header_protection_key",
+              "contentpaddingaddition": "content_padding_addition",
+              "rekeyaftertime": "rekey_after_time", "rekeytimeout": "rekey_timeout",
+              "rejectaftertime": "reject_after_time", "keepalivetimeout": "keepalive_timeout",
+              "maxhandshakeattempts": "max_handshake_attempts",
+              "randomtrailers": "random_trailers", "disablecookies": "disable_cookies"}
+    for kind, values in sections:
+        if kind == "interface":
+            obfuscation.update({target: values[source] for source, target in fields.items()
+                                if source in values})
+    if "random_trailers" in obfuscation:
+        obfuscation["random_trailers"] = _bool(obfuscation["random_trailers"])
+    if "disable_cookies" in obfuscation:
+        obfuscation["disable_cookies"] = _bool(obfuscation["disable_cookies"])
+    version = "3.1" if any(key in obfuscation for key in (
+        "header_protection_key", "content_padding_addition", "rekey_after_time",
+        "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts",
+        "random_trailers", "disable_cookies")) else "2.0"
+    mtu = _int_or_none(interface.get("mtu"))
+    parsed = ParsedInstance(
+        "conf", port, address, private, public, obfuscation, mtu=mtu,
+        endpoint_host=interface.get("endpoint"),
+        client_dns=_split_list(interface.get("dns")), peers=peers, awg_version=version,
+    )
+    if generated:
+        parsed.warnings.append(Warning("PRIVATE_KEY_GENERATED", 1))
+    return parsed
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -315,9 +401,10 @@ def validate_parsed(parsed: ParsedInstance) -> list[Problem]:
                       for e in validate_3x_fields(obf))
     except (TypeError, ValueError):
         result.append(Problem("INVALID_3X_FIELD", "obfuscation"))
-    if obf.get("header_protection_key") and any(_int_or_none(obf.get(f"s{i}")) is None or
-                                                  _int_or_none(obf.get(f"s{i}")) < 12
-                                                  for i in range(1, 5)):
+    if obf.get("header_protection_key") and any(
+        _int_or_none(obf.get(f"s{i}")) is None or _int_or_none(obf.get(f"s{i}")) < 12
+        for i in range(1, 5)
+    ):
         result.append(Problem("S_HEADER_MINIMUM", "s1..s4"))
     ranges: list[tuple[int, int]] = []
     for i in range(1, 5):
@@ -422,11 +509,13 @@ def _wg0_peers(path: str | Path) -> set[tuple[str, str]]:
 def _apply(session, parsed: ParsedInstance, name: str, crypto: Crypto) -> Instance:
     instance = service.create_instance(
         session, name, parsed.listen_port, parsed.address, private_key=parsed.private_key,
-        obfuscation=parsed.obfuscation or None, mtu=parsed.mtu, endpoint_host=parsed.endpoint_host,
+        obfuscation=service.complete_import_obfuscation(
+            parsed.obfuscation, parsed.mtu, parsed.awg_version
+        ) or None, mtu=parsed.mtu, endpoint_host=parsed.endpoint_host,
         client_dns=", ".join(parsed.client_dns) if parsed.client_dns else None,
         client_keepalive=parsed.client_keepalive,
         client_allowed_ips=", ".join(parsed.client_allowed_ips) if parsed.client_allowed_ips else None,
-        crypto=crypto,
+        crypto=crypto, awg_version=parsed.awg_version,
     )
     for peer in parsed.peers:
         service.import_peer(session, instance.id, peer.name, public_key=peer.public_key,

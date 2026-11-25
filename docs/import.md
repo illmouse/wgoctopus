@@ -32,6 +32,18 @@ committing. The importer does not import nodes, placements, observed state,
 or runtime configuration. It does not place instances on nodes. Place the
 instance explicitly after import and before cutover.
 
+## Import a server `.conf` through the API
+
+`POST /v1/instances/import` accepts `{"name":"wg0","config":"[Interface]..."}`.
+The config must contain one server `[Interface]` with `Address` and
+`ListenPort`; an omitted `PrivateKey` is generated and reported as a warning.
+Peer sections may contain `PublicKey`, `AllowedIPs`, and `PresharedKey`.
+JSON requests and multipart form uploads (`file` or `config`)
+are supported; the configuration is limited to 256 KiB. Optional `address` and
+`endpoint_host` fields override the parsed address and client endpoint. Keys are encrypted at
+rest and never included in the response. Client-side peer private keys are not
+imported by this endpoint; a config containing one is rejected.
+
 ## Legacy Telegram users
 
 Import the old bot's `users.db` read-only with

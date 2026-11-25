@@ -79,7 +79,12 @@ async def test_probe_delivery_scrape_and_delete(session, fake_agent_factory, cry
         assert client_peer["persistent_keepalive"] == 5
         assert client_peer["preshared_key"] == psk == server_peer["preshared_key"]
         assert client_peer["allowed_ips"] == ["203.0.113.20/32"]
-        assert runner_iface["obfuscation"] == instance["obfuscation"]
+        assert {key: value for key, value in runner_iface["obfuscation"].items()
+                if key != "header_protection_key"} == {
+                    key: value for key, value in instance["obfuscation"].items()
+                    if key != "header_protection_key_set"
+                }
+        assert runner_iface["obfuscation"]["header_protection_key"]
         assert server_peer["allowed_ips"] == [f"{probe_ip}/32"]
         assert client.get(f"/v1/nodes/{hop['id']}").json()["desired_revision"] == hop_revision
         assert hop_revision_db == hop_revision

@@ -141,7 +141,17 @@ def test_account_management_with_sessions(web):
     assert client.get("/v1/web-accounts").status_code == 403
     assert client.post("/v1/web-accounts", json=body, headers={"X-CSRF-Token": ops_csrf}).status_code == 403
     client.post("/auth/logout", headers={"X-CSRF-Token": ops_csrf})
-    login(client, "view")
+    admin_csrf = login(client, "admin").json()["csrf_token"]
+    headers = {"X-CSRF-Token": admin_csrf}
+    assert client.patch("/v1/web-accounts/admin", json={"role": "viewer"}, headers=headers).status_code == 403
+    assert client.patch("/v1/web-accounts/admin", json={"enabled": False}, headers=headers).status_code == 403
+    assert client.delete("/v1/web-accounts/admin", headers=headers).status_code == 403
+    assert client.patch("/v1/web-accounts/view", json={"role": "operator"}, headers=headers).status_code == 200
+    assert client.patch("/v1/web-accounts/view", json={"enabled": False}, headers=headers).status_code == 200
+    assert client.patch("/v1/web-accounts/view", json={"enabled": True}, headers=headers).status_code == 200
+    assert client.delete("/v1/web-accounts/view", headers=headers).status_code == 204
+    client.post("/auth/logout", headers=headers)
+    login(client, "s1")
     assert client.delete("/v1/web-accounts/s1").status_code == 403
     client.cookies.clear()
     assert client.get("/v1/web-accounts").status_code == 401

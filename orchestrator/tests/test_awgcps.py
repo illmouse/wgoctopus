@@ -43,6 +43,22 @@ def test_binary_profile_prefix(profile, begins):
     assert raw.startswith(bytes.fromhex(begins))
 
 
+@pytest.mark.parametrize("profile,begins", [
+    ("quic_0rtt", "d000000001"), ("dtls_1_2", "16fefd"),
+    ("dtls_1_3", "16fefc"), ("http3", "c000000001"),
+    ("stun", "000100002112a442"),
+])
+def test_added_profiles_have_protocol_headers_and_bounded_chains(profile, begins):
+    from wgoctopus_orch.awgcps import KMOD_CHAIN_BUDGET, _cost, validate_cps_chain
+
+    rnd, rb = seeded(23)
+    chain = generate_cps(profile, rnd=rnd, rand_bytes=rb, mtu=1280)
+    raw = bytes.fromhex(re.search(r"<b 0x([0-9a-f]+)>", chain["i1"]).group(1))
+    assert raw.startswith(bytes.fromhex(begins))
+    assert sum(_cost(value) for value in chain.values()) <= KMOD_CHAIN_BUDGET
+    assert validate_cps_chain(chain) == []
+
+
 @pytest.mark.parametrize("value", ["<x>", "abc", "<r>", "<b 0xABC>", "<r 1x>"])
 def test_rejects_invalid_tags(value):
     assert validate_cps(value)
