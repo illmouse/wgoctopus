@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wgoctopus-bot
+  namespace: wgoctopus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wgoctopus-bot
+  template:
+    metadata:
+      labels:
+        app: wgoctopus-bot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: bot
+          image: ghcr.io/illmouse/wgoctopus-bot:main-latest
+          env:
+            - name: BOT_TOKEN_FILE
+              value: /run/secrets/wgoctopus/BOT_TOKEN
+            - name: ORCH_URL
+              value: http://wgoctopus.wgoctopus.svc:80
+            - name: ORCH_TOKEN_FILE
+              value: /run/secrets/wgoctopus/WGOCTOPUS_API_TOKEN
+            - name: BOT_INSTANCE
+              value: wgoctopus
+            # TODO: Confirm this instance exists in the orchestrator database.
+            # ADMIN_USERNAMES is intentionally unset; permissions are DB-managed.
+          volumeMounts:
+            - name: credentials
+              mountPath: /run/secrets/wgoctopus
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: credentials
+          secret:
+            secretName: wgoctopus-secrets
+            defaultMode: 0440
+            items:
+              - key: BOT_TOKEN
+                path: BOT_TOKEN
+              - key: WGOCTOPUS_API_TOKEN
+                path: WGOCTOPUS_API_TOKEN

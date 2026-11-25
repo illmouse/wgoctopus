@@ -1,0 +1,56 @@
+name: Bot image
+on:
+  pull_request:
+    paths:
+      - "bot/**"
+      - ".github/workflows/bot-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "bot/**"
+      - ".github/workflows/bot-image.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp
+          -e PIP_CACHE_DIR=/tmp/pip -v "$PWD:/work" -w /work/bot
+          python:3.12-slim sh -c 'pip install -e ".[dev]" &&
+          PATH=/tmp/.local/bin:$PATH pytest --cov=wgoctopus_bot
+          --cov-report=term-missing --cov-fail-under=85 -q &&
+          PATH=/tmp/.local/bin:$PATH ruff check src tests'
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/wgoctopus-bot
+          tags: |
+            type=ref,event=branch,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=main-latest,enable=${{ github.ref_name == 'main' }}
+            type=sha,format=long,prefix=
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: bot
+          file: bot/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
