@@ -1,8 +1,170 @@
 "use strict";
 const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || "";
+const root = document.documentElement;
+const savedTheme = localStorage.getItem("wgoctopus-theme");
+if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
+const toast = (message) => {
+  const region = document.querySelector(".toast-region");
+  if (!region) return;
+  const item = document.createElement("div");
+  item.className = "toast";
+  item.setAttribute("role", "status");
+  item.textContent = message;
+  region.append(item);
+  setTimeout(() => item.remove(), 3200);
+};
+document.querySelectorAll("[data-relative-time]").forEach((element) => {
+  const date = new Date(element.dataset.relativeTime);
+  if (Number.isNaN(date.valueOf())) return;
+  const seconds = Math.round((date - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const units = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
+  const [unit, size] = units.find(([, amount]) => Math.abs(seconds) >= amount) || ["second", 1];
+  element.textContent = rtf.format(Math.round(seconds / size), unit);
+});
+document.addEventListener("input", (event) => {
+  if (!event.target.matches("[data-table-search]")) return;
+  const query = event.target.value.trim().toLocaleLowerCase();
+  document.querySelectorAll(event.target.dataset.tableSearch).forEach((row) => {
+    row.hidden = !row.textContent.toLocaleLowerCase().includes(query);
+  });
+});
+function selectTab(name, updateUrl = true) {
+  const tab = [...document.querySelectorAll("[data-ui-tab]")].find((item) => item.dataset.uiTab === name);
+  if (!tab) return;
+  document.querySelectorAll("[data-ui-tab]").forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+  document.querySelectorAll("[data-ui-panel]").forEach((panel) => { panel.hidden = panel.dataset.uiPanel !== name; });
+  if (updateUrl) history.replaceState(null, "", `#${name}`);
+}
+if (document.querySelector("[data-ui-tab]")) {
+  selectTab(location.hash.slice(1) || new URLSearchParams(location.search).get("tab") || "overview", false);
+  addEventListener("hashchange", () => selectTab(location.hash.slice(1), false));
+}
+document.addEventListener("click", async (event) => {
+  const themeToggle = event.target.closest("[data-theme-toggle]");
+  if (themeToggle) {
+    const next = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches) ? "light" : "dark";
+    root.dataset.theme = next;
+    localStorage.setItem("wgoctopus-theme", next);
+    return;
+  }
+  const menuToggle = event.target.closest("[data-menu-toggle]");
+  if (menuToggle) {
+    const sidebar = document.getElementById("sidebar");
+    const open = sidebar.classList.toggle("open");
+    menuToggle.setAttribute("aria-expanded", String(open));
+    return;
+  }
+  const tab = event.target.closest("[data-ui-tab]");
+  if (tab) { selectTab(tab.dataset.uiTab); return; }
+  if (event.target.closest("[data-logout]")) {
+    await fetch("/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrf() } });
+    location.href = "/login";
+    return;
+  }
+  const openDialog = event.target.closest("[data-open-dialog]");
+  if (openDialog) {
+    const dialog = document.getElementById(openDialog.dataset.openDialog);
+    if (dialog) dialog.showModal();
+  }
+  const closeDialog = event.target.closest("[data-close-dialog]");
+  if (closeDialog) closeDialog.closest("dialog")?.close();
+  if (event.target.matches("dialog")) {
+    const bounds = event.target.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) event.target.close();
+  }
+  const qrButton = event.target.closest("[data-show-qr]");
+  if (qrButton) {
+    document.getElementById("qr-image").src = qrButton.dataset.showQr;
+    document.getElementById("qr-dialog").showModal();
+    return;
+  }
+  const button = event.target.closest("[data-copy], [data-copy-config]");
+  if (!button) return;
+  try {
+    let value = button.dataset.copy;
+    if (button.dataset.copyConfig) {
+      const response = await fetch(button.dataset.copyConfig);
+      if (!response.ok) throw new Error("Could not load config");
+      value = await response.text();
+    }
+    await navigator.clipboard.writeText(value);
+    toast("Copied to clipboard");
+  } catch (_) { toast("Copy failed — check clipboard permissions"); }
+});
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest("[data-confirm-form]");
+  if (!form || form.dataset.confirmed === "yes") { if (form) delete form.dataset.confirmed; return; }
+  event.preventDefault();
+  const dialog = document.getElementById("confirm-dialog");
+  dialog.querySelector("#confirm-question").textContent = form.dataset.confirmForm;
+  dialog.showModal();
+  dialog.addEventListener("close", function decide() {
+    dialog.removeEventListener("close", decide);
+    if (dialog.returnValue === "confirm") {
+      form.dataset.confirmed = "yes";
+      form.requestSubmit(event.submitter);
+    }
+  });
+});
+document.addEventListener("htmx:beforeRequest", (event) => {
+  event.target.classList.add("is-loading");
+  const activeForm = document.activeElement.closest("form");
+  window.pendingToast = activeForm?.dataset.toastSuccess
+    || activeForm?.closest("dialog")?.dataset.toastSuccess
+    || document.querySelector("dialog[open]")?.dataset.toastSuccess || null;
+});
+document.addEventListener("htmx:afterRequest", (event) => {
+  event.target.classList.remove("is-loading");
+  if (!event.detail.successful) delete window.pendingToast;
+});
+document.addEventListener("htmx:afterSwap", (event) => {
+  if (event.detail.target === document.body && document.querySelector("[data-ui-tab]")) {
+    selectTab(location.hash.slice(1) || new URLSearchParams(location.search).get("tab") || "overview", false);
+  }
+  if (event.detail.target === document.body && window.pendingToast) {
+    toast(window.pendingToast);
+    delete window.pendingToast;
+  }
+  const error = event.detail.target?.querySelector(".error,[role='alert']");
+  if (error) event.detail.target.closest("dialog")?.querySelector("input,select,textarea")?.focus();
+});
+document.addEventListener("htmx:afterRequest", (event) => {
+  const elt = event.detail.elt;
+  const form = elt.matches("form") ? elt : elt.closest("form");
+  const dialog = document.querySelector("dialog[open]") || elt.closest("dialog");
+  const message = elt.dataset.toastSuccess || form?.dataset.toastSuccess || dialog?.dataset.toastSuccess;
+  if (!message || !event.detail.successful) return;
+  if (event.detail.target === document.body) window.pendingToast = message;
+  else { delete window.pendingToast; dialog?.close(); toast(message); }
+});
+document.addEventListener("htmx:confirm", (event) => {
+  if (!event.detail.question) return;
+  event.preventDefault();
+  const dialog = document.getElementById("confirm-dialog");
+  dialog.querySelector("#confirm-question").textContent = event.detail.question;
+  dialog.showModal();
+  dialog.addEventListener("close", function decide() {
+    dialog.removeEventListener("close", decide);
+    if (dialog.returnValue === "confirm") event.detail.issueRequest(true);
+  });
+});
 
 document.addEventListener("htmx:configRequest", (e) => { e.detail.headers["X-CSRF-Token"] = csrf(); });
-document.addEventListener("htmx:responseError", (e) => { if (e.detail.xhr.status === 401) location.href = "/login"; });
+document.addEventListener("htmx:responseError", (e) => {
+  if (e.detail.xhr.status === 401) location.href = "/login";
+  else {
+    const form = e.detail.elt.closest("form");
+    const errors = form?.querySelector(".form-errors") || document.querySelector("dialog[open] .form-errors");
+    if (errors && e.detail.xhr.status >= 400 && e.detail.xhr.status < 500) {
+      const parsed = new DOMParser().parseFromString(e.detail.xhr.responseText, "text/html");
+      errors.textContent = parsed.querySelector(".narrow p, .error, [role='alert']")?.textContent.trim()
+        || (e.detail.xhr.status === 403 ? "You are not allowed to perform this action." : "Check the form and try again.");
+      return;
+    }
+    toast(e.detail.xhr.status === 403 ? "You are not allowed to perform this action." : "The request could not be completed.");
+  }
+});
 
 document.getElementById("login-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -15,11 +177,6 @@ document.getElementById("login-form")?.addEventListener("submit", async (e) => {
   if (res.ok) { location.href = "/"; return; }
   err.textContent = res.status === 429 ? "Too many attempts, try again later." : "Invalid username or password.";
   err.hidden = false;
-});
-
-document.querySelector("[data-logout]")?.addEventListener("click", async () => {
-  await fetch("/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrf() } });
-  location.href = "/login";
 });
 
 const generator = document.getElementById("awg-generator");

@@ -1,8 +1,22 @@
 {% extends "base.html" %}
+{% from "_components.html" import page_header, modal, data_table, form_actions %}
 {% block title %}{{ node.name }} - wgoctopus{% endblock %}
 {% block body %}
-<p><a href="/ui/nodes">&larr; Nodes</a></p>
-<h1>{{ node.name }} {% if node.protected %}<span class="badge warn">protected</span>{% endif %}{% if not node.enabled %}<span class="badge muted">disabled</span>{% endif %}</h1>
+{% call page_header(node.name) %}
+<div class="btn-row">{% if can_provision %}<button type="button" class="danger" data-open-dialog="delete-node">Delete node</button>{% endif %}
+<a class="button secondary" href="/ui/nodes">All nodes</a></div>
+{% endcall %}
+<p><a href="/ui/nodes">Nodes</a> / {{ node.name }}</p>
+{% if node.protected %}<span class="badge warn">protected</span>{% endif %}{% if not node.enabled %}<span class="badge muted">disabled</span>{% endif %}
+{% if can_provision %}
+{% call modal("delete-node", "Delete " ~ node.name ~ "?") %}
+<p>This cannot be undone. Nodes with active placements cannot be deleted.</p>
+<form method="post" action="/ui/nodes/{{ node.id }}/delete" data-confirm-form="Delete node {{ node.name }} permanently?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Node deleted">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="danger">Delete node</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+</form>
+{% endcall %}
+{% endif %}
 <div class="card">
   <dl>
     <dt>Kind</dt><dd>{{ node.kind }}</dd>
@@ -11,31 +25,28 @@
     <dt>Egress interface</dt><dd>{{ node.egress_interface or "-" }}</dd>
     <dt>Reconciler</dt><dd>{% if node.reconciler %}<span class="badge {{ state_class.get(node.reconciler.state, 'bad') }}">{{ node.reconciler.state }}</span> failures: {{ node.reconciler.consecutive_failures }}{% else %}-{% endif %}</dd>
     <dt>Revision (applied / desired)</dt><dd>{{ node.observed.applied_revision if node.observed else "-" }} / {{ node.desired_revision if node.desired_revision is not none else "-" }}</dd>
-    <dt>Last seen</dt><dd>{{ node.observed.last_seen_at|ts if node.observed else "-" }}</dd>
+    <dt>Last seen</dt><dd>{% if node.observed and node.observed.last_seen_at %}<time data-relative-time="{{ node.observed.last_seen_at.isoformat() }}" title="{{ node.observed.last_seen_at|ts }}">{{ node.observed.last_seen_at|ts }}</time>{% else %}—{% endif %}</dd>
     {% if node.observed and node.observed.last_error %}<dt>Last error</dt><dd class="error">{{ node.observed.last_error }}</dd>{% endif %}
   </dl>
 </div>
 <h2>Provisioning</h2>
 {% if can_provision and node.mgmt_mode != "pull" %}
-<p>
+<div class="btn-row">
   {% if node.protected %}
   <button type="button" class="danger" hx-post="/ui/nodes/{{ node.id }}/provision?confirm=true" hx-target="#action-result" hx-confirm="This node is protected. Provision it anyway?">Provision protected node</button>
   {% else %}
   <button type="button" hx-post="/ui/nodes/{{ node.id }}/provision" hx-target="#action-result">Provision</button>
   {% endif %}
-</p>
+</div>
 <div id="action-result"></div>
 {% endif %}
-<table>
-  <thead><tr><th>Job</th><th>State</th><th>Started</th><th>Finished</th><th>Error</th></tr></thead>
-  <tbody>
+{% call data_table(["Job", "State", "Started", "Finished", "Error"]) %}
   {% for j in jobs %}
   <tr>
-    <td>{% if can_provision %}<a href="/ui/jobs/{{ j.id }}">#{{ j.id }}</a>{% else %}#{{ j.id }}{% endif %}</td>
-    <td><span class="badge {{ state_class.get(j.state, 'bad') }}">{{ j.state }}</span></td>
-    <td>{{ j.started_at|ts }}</td><td>{{ j.finished_at|ts }}</td><td>{{ j.error or "" }}</td>
+    <td data-label="Job">{% if can_provision %}<a href="/ui/jobs/{{ j.id }}">#{{ j.id }}</a>{% else %}#{{ j.id }}{% endif %}</td>
+    <td data-label="State"><span class="badge {{ state_class.get(j.state, 'bad') }}">{{ j.state }}</span></td>
+    <td data-label="Started">{{ j.started_at|ts }}</td><td data-label="Finished">{{ j.finished_at|ts }}</td><td data-label="Error">{{ j.error or "" }}</td>
   </tr>
-  {% else %}<tr><td colspan="5" class="muted">Never provisioned</td></tr>{% endfor %}
-  </tbody>
-</table>
+  {% else %}<tr><td data-label="Job" colspan="5" class="muted">Never provisioned</td></tr>{% endfor %}
+{% endcall %}
 {% endblock %}

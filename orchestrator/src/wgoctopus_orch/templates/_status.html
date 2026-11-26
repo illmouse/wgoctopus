@@ -1,19 +1,20 @@
-<div class="grid">
-  <div class="card"><span class="num">{{ summary.instances }}</span> instances</div>
-  <div class="card"><span class="num">{{ summary.peers }}</span> peers</div>
-  <div class="card {% if summary.nodes_unhealthy %}bad{% endif %}"><span class="num">{{ summary.nodes_unhealthy }}</span> unhealthy nodes</div>
+{% from "_components.html" import card, data_table, empty_state %}
+<div class="grid summary-grid">
+  {% call card() %}<span class="metric-label">Instances</span><div class="num">{{ summary.instances }}</div><a href="/ui/instances">Manage instances →</a>{% endcall %}
+  {% call card() %}<span class="metric-label">Peers</span><div class="num">{{ summary.peers }}</div>{% endcall %}
+  {% call card() %}<span class="metric-label">Nodes offline</span><div class="num">{{ summary.nodes_unhealthy }}</div><a href="/ui/nodes">Review nodes →</a>{% endcall %}
+  {% call card() %}<span class="metric-label">Nodes online</span><div class="num">{{ summary.nodes_by_state.get('IN_SYNC', 0) }}</div>{% endcall %}
+  {% call card() %}<span class="metric-label">Pending proposals</span><div class="num">{{ summary.pending_proposals }}</div><a href="/ui/failover">Review failover →</a>{% endcall %}
+  {% call card() %}<span class="metric-label">Pending requests</span><div class="num">{{ summary.pending_requests }}</div><a href="/ui/requests">Review requests →</a>{% endcall %}
 </div>
 <h2>Nodes by state</h2>
 <div class="grid">
 {% for name, count in summary.nodes_by_state.items() %}
-  <div class="card {{ state_class.get(name, 'bad') if count else 'muted' }}"><span class="num">{{ count }}</span> {{ name }}</div>
+  {% call card() %}<span class="metric-label">{{ name }}</span><div class="num">{{ count }}</div>{% endcall %}
 {% endfor %}
 </div>
 <h2>Recent events</h2>
-<table>
-  <thead><tr><th>Time</th><th>Event</th><th>Subject</th></tr></thead>
-  <tbody>
-  {% for e in events %}<tr><td>{{ e.ts }}</td><td>{{ e.kind }}</td><td>{{ e.subject }}</td></tr>
-  {% else %}<tr><td colspan="3" class="muted">No events yet</td></tr>{% endfor %}
-  </tbody>
-</table>
+{% call data_table(["Time", "Event", "Subject"]) %}
+{% for e in events %}<tr><td data-label="Time"><time data-relative-time="{{ e.ts.isoformat() }}" title="{{ e.ts|ts }}">{{ e.ts|ts }}</time></td><td data-label="Event">{{ e.kind }}</td><td data-label="Subject">{{ e.subject }}</td></tr>
+{% else %}<tr><td data-label="Events">{{ empty_state("No events yet") }}</td></tr>{% endfor %}
+{% endcall %}

@@ -195,6 +195,10 @@ def test_accounts_create_password_reset_and_safeguards(ui):
     headers = csrf_of(client)
     with sessions() as s:
         accounts = {a.username: a.id for a in s.query(WebAccount).all()}
+    invalid_htmx = client.post("/ui/accounts/create", data={
+        "username": "admin", "password": PW, "role": "viewer",
+    }, headers={**headers, "HX-Request": "true"})
+    assert invalid_htmx.status_code == 400 and "Invalid account details" in invalid_htmx.text
     assert client.post("/ui/accounts/create", data={"username": "newui", "password": PW, "role": "viewer"}, headers=headers).status_code == 303
     assert "newui" in client.get("/ui/accounts").text
     with sessions() as s:
@@ -289,6 +293,19 @@ def test_empty_nodes_and_pull_node_has_no_provision_button(ui):
     node = add_node(client, "pulled", mgmt_mode="pull", ssh_host=None, ssh_user=None)
     detail = client.get(f"/ui/nodes/{node['id']}")
     assert detail.status_code == 200 and "hx-post" not in detail.text
+
+
+def test_node_new_page_and_inline_validation(ui):
+    client, _ = ui
+    login(client)
+    page = client.get("/ui/nodes/new")
+    assert page.status_code == 200 and 'action="/ui/nodes/create"' in page.text
+    assert client.post("/ui/nodes/create", data={
+        "name": "", "_csrf": csrf_of(client)["X-CSRF-Token"],
+    }).status_code == 422
+    client.cookies.clear()
+    login(client, "view")
+    assert client.get("/ui/nodes/new").status_code == 403
 
 
 def test_provision_from_ui_runs_and_streams_log(ui):
@@ -415,6 +432,24 @@ def test_empty_instances(ui):
     login(client)
     assert "No instances yet" in client.get("/ui/instances").text
 
+
+def test_instance_new_page_role_and_create_csrf(ui):
+    client, _ = ui
+    login(client)
+    page = client.get("/ui/instances/new")
+    assert page.status_code == 200
+    assert 'id="awg-generator"' in page.text and 'id="instance-create"' in page.text
+    assert client.post("/ui/instances/create", data={"name": "bad"}).status_code == 403
+    invalid = client.post("/ui/instances/create", data={
+        "name": "invalid name", "address": "bad", "listen_port": "0",
+        "_csrf": csrf_of(client)["X-CSRF-Token"],
+    })
+    assert invalid.status_code == 422 and "Check the instance name" in invalid.text
+    client.cookies.clear()
+    login(client, "view")
+    assert client.get("/ui/instances/new").status_code == 403
+
+
 def test_admin_can_create_instance_node_and_placement(ui):
     client, sessions = ui
     login(client)
@@ -438,6 +473,33 @@ def test_admin_can_create_instance_node_and_placement(ui):
     assert client.post("/ui/nodes/create", data={"name": "blocked"}).status_code == 403
 
 
+def test_node_and_instance_delete_require_admin_csrf_and_confirmation(ui):
+    client, sessions = ui
+    login(client)
+    csrf = csrf_of(client)
+    token = {"_csrf": csrf["X-CSRF-Token"]}
+    assert client.post("/ui/nodes/create", data={"name": "removable-node", **token}).status_code == 303
+    assert client.post("/ui/instances/create", data={
+        "name": "removable", "address": "10.50.0.1/24", "listen_port": "52000", **token,
+    }).status_code == 303
+    with sessions() as s:
+        nid = s.scalar(select(Node.id).where(Node.name == "removable-node"))
+        iid = s.scalar(select(Instance.id).where(Instance.name == "removable"))
+    assert client.post(f"/ui/nodes/{nid}/delete", data={"confirm": "yes"}).status_code == 403
+    assert client.post(f"/ui/instances/{iid}/delete", data={"confirm": "yes"}).status_code == 403
+    client.cookies.clear()
+    login(client, "view")
+    viewer_form = {"confirm": "yes", "_csrf": csrf_of(client)["X-CSRF-Token"]}
+    assert client.post(f"/ui/nodes/{nid}/delete", data=viewer_form).status_code == 403
+    client.cookies.clear()
+    login(client)
+    token = {"_csrf": csrf_of(client)["X-CSRF-Token"]}
+    assert client.post(f"/ui/nodes/{nid}/delete", data={**token}).status_code == 400
+    assert client.post(f"/ui/instances/{iid}/delete", data={**token}).status_code == 400
+    assert client.post(f"/ui/nodes/{nid}/delete", data={"confirm": "yes", **token}).status_code == 303
+    assert client.post(f"/ui/instances/{iid}/delete", data={"confirm": "yes", **token}).status_code == 303
+
+
 def test_operator_manages_peers(ui):
     client, sessions = ui
     instance, _, _ = make_instance(client)
@@ -448,7 +510,8 @@ def test_operator_manages_peers(ui):
     assert "Add peer" in detail.text and "Make active" in detail.text
     kicks = len(client.app.state.reconciler.kicks)
     added = client.post(f"/ui/instances/{iid}/peers", content="name=phone&owner=alice", headers=headers)
-    assert added.status_code == 204 and added.headers["hx-refresh"] == "true"
+    assert added.status_code == 200 and added.headers["hx-retarget"] == "#peer-rows"
+    assert added.headers["hx-reswap"] == "afterbegin" and "<tr>" in added.text
     peers = client.get(f"/v1/instances/{iid}/peers", headers=BEARER).json()
     assert [(p["name"], p["owner"]) for p in peers] == [("phone", "alice")]
     assert len(client.app.state.reconciler.kicks) > kicks
@@ -456,11 +519,13 @@ def test_operator_manages_peers(ui):
     page = client.get(f"/ui/instances/{iid}")
     assert "phone" in page.text and "Disable" in page.text and f"/ui/peers/{pid}/config" in page.text
 
-    assert "required" in client.post(f"/ui/instances/{iid}/peers", content="name=+&owner=", headers=headers).text
+    invalid = client.post(f"/ui/instances/{iid}/peers", content="name=+&owner=",
+                          headers={**headers, "HX-Request": "true"})
+    assert invalid.status_code == 200 and "required" in invalid.text
     assert "reserved" in client.post(f"/ui/instances/{iid}/peers", content=f"name=x&owner={service.PROBE_OWNER}", headers=headers).text
     assert "unknown instance" in client.post("/ui/instances/999/peers", content="name=x", headers=headers).text
     for index in range(4):
-        assert client.post(f"/ui/instances/{iid}/peers", content=f"name=p{index}", headers=headers).status_code == 204
+        assert client.post(f"/ui/instances/{iid}/peers", content=f"name=p{index}", headers=headers).status_code == 200
     assert "no free peer address" in client.post(f"/ui/instances/{iid}/peers", content="name=full", headers=headers).text
 
     off = client.post(f"/ui/peers/{pid}/enabled?value=false", headers=headers)
@@ -503,6 +568,20 @@ def test_peer_config_download_is_audited(ui):
     no_host = client.get(f"/ui/peers/{bare_pid}/config")
     assert no_host.status_code == 409 and "endpoint_host is required" in no_host.text
     assert client.get("/ui/peers/999/config").status_code == 404
+
+
+def test_peer_qr_is_operator_only_and_served_locally(ui):
+    client, _ = ui
+    instance, *_ = make_instance(client)
+    peer_id = add_peer(client, instance["id"], "qr-phone")["id"]
+    login(client, "view")
+    assert client.get(f"/ui/peers/{peer_id}/qr").status_code == 403
+    client.cookies.clear()
+    login(client, "ops")
+    response = client.get(f"/ui/peers/{peer_id}/qr")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in response.text
 
 
 def test_switch_active_node_from_ui(ui):

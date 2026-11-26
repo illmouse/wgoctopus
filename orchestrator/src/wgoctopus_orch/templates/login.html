@@ -1,12 +1,15 @@
 {% extends "base.html" %}
+{% from "_components.html" import form_actions %}
 {% block title %}Sign in - wgoctopus{% endblock %}
 {% block body %}
-<section class="card narrow">
-  <h1>Sign in</h1>
-  <form id="login-form" autocomplete="on">
-    <label>Username <input name="username" autocomplete="username" required autofocus></label>
-    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
+<button type="button" class="secondary theme-login" data-theme-toggle aria-label="Toggle color theme">◐ Theme</button>
+<section class="card login-card">
+  <div class="brand"><span class="brand-mark">w</span><span>wgoctopus</span></div>
+  <h1>Welcome back</h1><p class="muted">Sign in to manage your WireGuard fleet.</p>
+  <form id="login-form" autocomplete="on" class="form-row">
+    <div class="form-field"><label>Username <input name="username" autocomplete="username" required autofocus></label></div>
+    <div class="form-field"><label>Password <input name="password" type="password" autocomplete="current-password" required></label></div>
+    {% call form_actions() %}<button type="submit" class="full-width">Sign in</button>{% endcall %}
     <p id="login-error" class="error" role="alert" hidden></p>
   </form>
   {% if oidc %}<p class="sep"><a class="button" href="/auth/oidc/login">Sign in with SSO</a></p>{% endif %}

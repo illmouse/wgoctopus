@@ -1,21 +1,40 @@
 {% extends "base.html" %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, modal %}
 {% block title %}Users - wgoctopus{% endblock %}
 {% block body %}
-<h1>Bot users</h1>
+{% call page_header("Bot users", "Telegram identities and access limits") %}{% if editable %}<button type="button" data-open-dialog="create-user">Add user</button>{% endif %}{% endcall %}
 {% if editable %}
-<form method="post" action="/ui/users/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-<label>Username <input name="username" required></label><label>Telegram ID <input name="tg_id" type="number"></label>
-<label>Role <select name="role"><option>user</option><option>admin</option></select></label>
-<label>Config limit <input name="config_limit" type="number" min="-1" value="3"></label><button>Create</button></form>
+{% call modal("create-user", "Create bot user") %}
+<form method="post" action="/ui/users/create" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user created">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <div class="form-row">
+    {% call form_field("Username", "username") %}<input name="username" required>{% endcall %}
+    {% call form_field("Telegram ID", "tg_id") %}<input name="tg_id" type="number">{% endcall %}
+    {% call form_field("Role", "role") %}<select name="role"><option>user</option><option>admin</option></select>{% endcall %}
+    {% call form_field("Config limit", "config_limit") %}<input name="config_limit" type="number" min="-1" value="3">{% endcall %}
+  </div>
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Create</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+</form>
+{% endcall %}
 {% endif %}
-<table><thead><tr><th>Username</th><th>Telegram ID</th><th>Role</th><th>Limit</th><th>Status</th>{% if editable %}<th>Actions</th>{% endif %}</tr></thead><tbody>
-{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.tg_id or "" }}</td><td>{{ u.role }}</td><td>{{ u.config_limit }}</td><td>{{ u.status }}</td>
-{% if editable %}<td><form method="post" action="/ui/users/{{ u.username }}/update"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-<input name="username" value="{{ u.username }}" aria-label="Telegram username">
-<input name="tg_id" type="number" value="{{ u.tg_id or '' }}" aria-label="Telegram ID">
-<select name="role"><option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option><option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option></select>
-<input name="config_limit" type="number" min="-1" value="{{ u.config_limit }}" aria-label="Config limit">
-<select name="status"><option value="enabled" {% if u.status == 'enabled' %}selected{% endif %}>enabled</option><option value="disabled" {% if u.status == 'disabled' %}selected{% endif %}>disabled</option></select><button>Save</button></form>
-<form method="post" action="/ui/users/{{ u.username }}/delete"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Delete</button></form></td>{% endif %}</tr>{% endfor %}
-</tbody></table>
+<label class="search">Search users<input type="search" placeholder="Username or Telegram ID" data-table-search="#user-rows tr" aria-label="Search users"></label>
+<div id="user-rows">{% call data_table(["Username", "Telegram ID", "Role", "Limit", "Status"] + (["Actions"] if editable else [])) %}
+{% for u in users %}<tr><td data-label="Username">{{ u.username }}</td><td data-label="Telegram ID">{{ u.tg_id or "—" }}</td><td data-label="Role"><span class="badge muted">{{ u.role }}</span></td><td data-label="Limit">{{ u.config_limit }}</td><td data-label="Status"><span class="badge {{ 'ok' if u.status == 'enabled' else 'muted' }}">{{ u.status }}</span></td>
+{% if editable %}<td data-label="Actions"><div class="cell-actions"><button type="button" class="secondary sm" data-open-dialog="user-{{ u.username }}">Edit</button></div>
+{% call modal("user-" ~ u.username, "Edit " ~ u.username) %}
+<form method="post" action="/ui/users/{{ u.username }}/update" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user updated">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <div class="form-row">
+    {% call form_field("Username", "username") %}<input name="username" value="{{ u.username }}" required>{% endcall %}
+    {% call form_field("Telegram ID", "tg_id") %}<input name="tg_id" type="number" value="{{ u.tg_id or '' }}">{% endcall %}
+    {% call form_field("Role", "role") %}<select name="role"><option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option><option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option></select>{% endcall %}
+    {% call form_field("Config limit", "config_limit") %}<input name="config_limit" type="number" min="-1" value="{{ u.config_limit }}">{% endcall %}
+    {% call form_field("Status", "status") %}<select name="status"><option value="enabled" {% if u.status == 'enabled' %}selected{% endif %}>enabled</option><option value="disabled" {% if u.status == 'disabled' %}selected{% endif %}>disabled</option></select>{% endcall %}
+  </div>
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Save changes</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+</form>
+<form method="post" action="/ui/users/{{ u.username }}/delete" class="dialog-danger" data-confirm-form="Delete user {{ u.username }}?" data-toast-success="Bot user deleted" hx-boost="true" hx-target="body" hx-swap="innerHTML"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="cell-actions"><button class="danger">Delete user</button></div></form>
+{% endcall %}</div>
+</td>{% endif %}</tr>{% else %}<tr><td data-label="Username" colspan="{{ 6 if editable else 5 }}"><div class="empty-state"><h2>No users</h2><p>Users will appear as they are added.</p></div></td></tr>{% endfor %}
+{% endcall %}
 {% endblock %}

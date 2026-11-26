@@ -1,0 +1,6 @@
+<tr>
+  <td data-label="Name">{{ peer.name }}</td><td data-label="Owner">{{ peer.owner or "—" }}</td><td data-label="Address"><code>{{ peer.allowed_ip }}</code></td>
+  <td data-label="Status"><span class="badge {{ 'ok' if peer.enabled else 'muted' }}">{{ "Enabled" if peer.enabled else "Disabled" }}</span></td>
+  <td data-label="Created">{{ peer.created_at }}</td>
+  <td data-label="Actions"><div class="cell-actions"><a class="button secondary sm" href="/ui/peers/{{ peer.id }}/config" download>Download config</a></div></td>
+</tr>

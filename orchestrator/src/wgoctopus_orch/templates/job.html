@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Job #{{ job.id }} - wgoctopus{% endblock %}
 {% block body %}
-<p><a href="/ui/nodes/{{ job.node_id }}">&larr; Node</a></p>
-<h1>Provisioning job #{{ job.id }}</h1>
+<div class="page-heading"><div><p><a href="/ui/nodes/{{ job.node_id }}">Node</a> / Job #{{ job.id }}</p><h1>Provisioning job #{{ job.id }}</h1></div><a class="button secondary" href="/ui/nodes/{{ job.node_id }}">Back to node</a></div>
 {% include "_job.html" %}
 {% endblock %}

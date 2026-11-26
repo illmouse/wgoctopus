@@ -1,11 +1,34 @@
 {% extends "base.html" %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, modal %}
 {% block title %}Accounts - wgoctopus{% endblock %}
-{% block body %}<h1>Web accounts</h1>
-{% if editable %}<form method="post" action="/ui/accounts/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-<label>Username <input name="username" required maxlength="64"></label><label>Temporary password <input type="password" name="password" required minlength="12"></label>
-<label>Role <select name="role"><option>viewer</option><option>operator</option><option>admin</option></select></label><button>Create account</button></form>{% endif %}
-<table><thead><tr><th>Username</th><th>Role</th><th>Source</th><th>Enabled</th>{% if editable %}<th>Actions</th>{% endif %}</tr></thead><tbody>
-{% for a in accounts %}<tr><td>{{ a.username }}</td><td>{{ a.role }}</td><td>{{ a.source }}</td><td>{{ a.enabled }}</td>{% if editable %}<td><form method="post" action="/ui/accounts/{{ a.id }}/update"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><select name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select><label><input type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}> Enabled</label><button>Save</button></form>
-{% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><label>New password <input type="password" name="password" required minlength="12"></label><button>Reset password</button></form>{% endif %}
-<form method="post" action="/ui/accounts/{{ a.id }}/delete"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Delete</button></form></td>{% endif %}</tr>{% endfor %}
-</tbody></table>{% endblock %}
+{% block body %}
+{% call page_header("Web accounts", "Console identities, roles and sign-in access") %}{% if editable %}<button type="button" data-open-dialog="create-account">Add account</button>{% endif %}{% endcall %}
+{% if editable %}
+{% call modal("create-account", "Create web account") %}
+<form method="post" action="/ui/accounts/create" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Web account created">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <div class="form-row">
+    {% call form_field("Username", "username") %}<input name="username" required maxlength="64">{% endcall %}
+    {% call form_field("Temporary password", "password") %}<input type="password" name="password" required minlength="12">{% endcall %}
+    {% call form_field("Role", "role") %}<select name="role"><option>viewer</option><option>operator</option><option>admin</option></select>{% endcall %}
+  </div>
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Create account</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+</form>
+{% endcall %}
+{% endif %}
+<label class="search">Search accounts<input type="search" placeholder="Username, role or source" data-table-search="#account-rows tr" aria-label="Search accounts"></label>
+<div id="account-rows">{% call data_table(["Username", "Role", "Source", "Enabled"] + (["Actions"] if editable else [])) %}
+{% for a in accounts %}<tr><td data-label="Username">{{ a.username }}</td><td data-label="Role"><span class="badge muted">{{ a.role }}</span></td><td data-label="Source">{{ a.source }}</td><td data-label="Enabled"><span class="badge {{ 'ok' if a.enabled else 'bad' }}">{{ 'Enabled' if a.enabled else 'Disabled' }}</span></td>{% if editable %}<td data-label="Actions"><div class="cell-actions"><button class="secondary sm" type="button" data-open-dialog="account-{{ a.id }}">Manage</button></div>
+{% call modal("account-" ~ a.id, "Manage " ~ a.username) %}
+<form method="post" action="/ui/accounts/{{ a.id }}/update" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  {% call form_field("Role", "role") %}<select name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Enabled", "enabled") %}<input type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}>{% endcall %}
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Save</button><button type="button" class="secondary" data-close-dialog>Close</button></div>{% endcall %}
+</form>
+{% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password" class="stack dialog-danger" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("New password", "password") %}<input type="password" name="password" required minlength="12">{% endcall %}{% call form_actions() %}<button>Reset password</button>{% endcall %}</form>{% endif %}
+<form method="post" action="/ui/accounts/{{ a.id }}/delete" class="dialog-danger" data-confirm-form="Delete account {{ a.username }}?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="cell-actions"><button class="danger">Delete</button></div></form>
+{% endcall %}</div>
+</td>{% endif %}</tr>{% else %}<tr><td data-label="Username" colspan="{{ 5 if editable else 4 }}"><div class="empty-state"><h2>No accounts</h2><p>Create a console account to grant access.</p></div></td></tr>{% endfor %}
+{% endcall %}
+{% endblock %}

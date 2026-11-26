@@ -5,13 +5,16 @@ never expose /v1 to cookie sessions; they call the same service functions as the
 """
 import json
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs
 
+import qrcode
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from qrcode.image.svg import SvgPathImage
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
@@ -331,7 +334,10 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
     def dashboard_data():
         with sessions() as s:
             events = [{"ts": e.ts, "kind": e.kind, "subject": e.subject} for e in s.scalars(select(Event).order_by(Event.id.desc()).limit(10))]
-            return {"summary": status(s), "events": events}
+            summary = status(s)
+            summary["pending_requests"] = len(s.scalars(select(UserRequest.id).where(UserRequest.status == "pending")).all())
+            summary["pending_proposals"] = failovers(s, "pending", 100, 0)[1]
+            return {"summary": summary, "events": events}
 
     @app.get("/ui/", include_in_schema=False)
     def dashboard(request: Request):
@@ -351,7 +357,12 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
     @app.get("/ui/nodes", include_in_schema=False)
     def nodes_page(request: Request):
         info, denied = check(request)
-        return denied or render("nodes.html", request, info, can_create=webauth.has_role(info.role, "admin"), **nodes_data())
+        return denied or render("nodes.html", request, info, can_create=webauth.has_role(info.role, "admin"),
+                                create_only=False, **nodes_data())
+    @app.get("/ui/nodes/new", include_in_schema=False)
+    def node_new_page(request: Request):
+        info, denied = check(request, "admin")
+        return denied or render("nodes.html", request, info, can_create=True, create_only=True, nodes=[])
     @app.post("/ui/nodes/create", include_in_schema=False)
     async def node_create(request: Request):
         info, denied = check(request, "admin", page=False)
@@ -386,7 +397,8 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 ident = node.id
             return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/nodes/{ident}"})
         except (ValueError, TypeError):
-            return render("_error.html", request, info, text="Invalid node details.")
+            return render("nodes.html", request, info, status_code=422, can_create=True,
+                          create_only=True, nodes=[], form_error="Check the node name, ports, and management settings.")
 
     @app.get("/ui/fragments/nodes", include_in_schema=False)
     def nodes_fragment(request: Request):
@@ -404,6 +416,22 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             return message(request, info, 404, "Node not found.")
         jobs = provision().list_jobs(node_id, 10)
         return render("node.html", request, info, node=node, jobs=jobs, can_provision=webauth.has_role(info.role, "admin"))
+
+    @app.post("/ui/nodes/{node_id}/delete", include_in_schema=False)
+    async def node_delete(node_id: int, request: Request):
+        info, denied = check(request, "admin", page=False)
+        if denied:
+            return denied
+        form = await form_data(request)
+        if not valid_csrf(request, info, form):
+            return Response(status_code=403, headers=SECURITY_HEADERS)
+        if form.get("confirm") != "yes":
+            return message(request, info, 400, "Confirm node deletion first.")
+        _, error = run(ops.delete_node, node_id)
+        if error:
+            return message(request, info, 409, error)
+        audit("web.node_delete", info, {"node_id": node_id})
+        return RedirectResponse("/ui/nodes", status_code=303, headers=SECURITY_HEADERS)
 
     @app.post("/ui/nodes/{node_id}/provision", include_in_schema=False)
     async def provision_start(node_id: int, request: Request, confirm: bool = False):
@@ -492,7 +520,14 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             return denied
         with sessions() as s:
             return render("instances.html", request, info, instances=instances(s), node_names={n["id"]: n["name"] for n in nodes(s)},
-                          can_create=webauth.has_role(info.role, "admin"))
+                          can_create=webauth.has_role(info.role, "admin"), new_only=False)
+    @app.get("/ui/instances/new", include_in_schema=False)
+    def instance_new_page(request: Request):
+        info, denied = check(request, "admin")
+        if denied:
+            return denied
+        return render("instances.html", request, info, instances=[], node_names={},
+                      can_create=True, new_only=True)
     @app.post("/ui/instances/create", include_in_schema=False)
     async def instance_create(request: Request):
         info, denied = check(request, "admin", page=False)
@@ -524,7 +559,9 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 ident = instance.id
             return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/instances/{ident}"})
         except (ValueError, TypeError, json.JSONDecodeError):
-            return render("_error.html", request, info, text="Invalid instance details.")
+            return render("instances.html", request, info, status_code=422, instances=[],
+                          node_names={}, can_create=True, new_only=True,
+                          form_error="Check the instance name, address, port, and AWG parameters.")
 
     @app.post("/ui/instances/generate", include_in_schema=False)
     async def instance_generate(request: Request):
@@ -767,6 +804,22 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             audit("web.switch", info, {"instance_id": instance_id, "to_node_id": node_id})
         return refreshed(request, info, error)
 
+    @app.post("/ui/instances/{instance_id}/delete", include_in_schema=False)
+    async def instance_delete(instance_id: int, request: Request):
+        info, denied = check(request, "admin", page=False)
+        if denied:
+            return denied
+        form = await form_data(request)
+        if not valid_csrf(request, info, form):
+            return Response(status_code=403, headers=SECURITY_HEADERS)
+        if form.get("confirm") != "yes":
+            return message(request, info, 400, "Confirm instance deletion first.")
+        _, error = run(ops.delete_instance, instance_id)
+        if error:
+            return message(request, info, 409, error)
+        audit("web.instance_delete", info, {"instance_id": instance_id})
+        return RedirectResponse("/ui/instances", status_code=303, headers=SECURITY_HEADERS)
+
     @app.post("/ui/instances/{instance_id}/peers", include_in_schema=False)
     async def peer_add(instance_id: int, request: Request):
         info, denied = check(request, "operator", write=True, page=False)
@@ -778,9 +831,13 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not name:
             return render("_error.html", request, info, text="Peer name is required.")
         result, error = run(ops.add_peer, instance_id, name, owner)
-        if not error:
-            audit("web.peer_add", info, {"instance_id": instance_id, "peer_id": result["id"]})
-        return refreshed(request, info, error)
+        if error:
+            return render("_error.html", request, info, text=error)
+        audit("web.peer_add", info, {"instance_id": instance_id, "peer_id": result["id"]})
+        response = render("_peer_row_created.html", request, info, peer=result)
+        response.headers.update({"HX-Retarget": "#peer-rows", "HX-Reswap": "afterbegin",
+                                 "HX-Trigger": "peerAdded"})
+        return response
 
     @app.post("/ui/peers/{peer_id}/enabled", include_in_schema=False)
     def peer_enabled(peer_id: int, value: bool, request: Request):
@@ -800,6 +857,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         _, error = run(ops.remove_peer, peer_id)
         if not error:
             audit("web.peer_delete", info, {"peer_id": peer_id})
+            return Response(status_code=204, headers=SECURITY_HEADERS)
         return refreshed(request, info, error)
 
     @app.get("/ui/peers/{peer_id}/config", include_in_schema=False)
@@ -811,6 +869,19 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if error:
             return message(request, info, 404 if "unknown" in error else 409, error)
         return Response(text, media_type="text/plain", headers={**SECURITY_HEADERS, "Content-Disposition": f'attachment; filename="peer-{peer_id}.conf"'})
+
+    @app.get("/ui/peers/{peer_id}/qr", include_in_schema=False)
+    def peer_qr(peer_id: int, request: Request):
+        info, denied = check(request, "operator", page=False)
+        if denied:
+            return denied
+        text, error = run(ops.config, peer_id, actor=info.username)
+        if error:
+            return Response(status_code=404 if "unknown" in error else 409, headers=SECURITY_HEADERS)
+        image = qrcode.make(text, image_factory=SvgPathImage)
+        output = BytesIO()
+        image.save(output)
+        return Response(output.getvalue(), media_type="image/svg+xml", headers=SECURITY_HEADERS)
 
     # failover proposals
     def pending_proposals():

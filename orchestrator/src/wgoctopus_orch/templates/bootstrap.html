@@ -1,22 +1,24 @@
 {% extends "base.html" %}
+{% from "_components.html" import page_header %}
 {% block title %}Bootstrap - wgoctopus{% endblock %}
 {% block body %}
-<h1>Bootstrap</h1>
+{% call page_header("Bootstrap", "Apply fleet configuration from the configured bootstrap source.") %}
+{% if boot.configured and can_apply %}
+<div class="btn-row">
+<button type="button" class="secondary" hx-post="/ui/bootstrap/apply?dry_run=true" hx-target="#bootstrap-result">Dry run</button>
+<button type="button" class="danger" hx-post="/ui/bootstrap/apply?dry_run=false" hx-target="#bootstrap-result" hx-confirm="Apply the bootstrap file to the live configuration?">Apply</button>
+</div>
+{% endif %}
+{% endcall %}
 <div class="card">
   <dl>
     <dt>File</dt><dd>{% if boot.configured %}<code>{{ boot.file }}</code>{% else %}<span class="muted">not configured</span>{% endif %}</dd>
-    <dt>Apply on start</dt><dd>{{ "yes" if boot.configured_apply else "no" }}</dd>
+    <dt>Apply on start</dt><dd><span class="badge {{ 'ok' if boot.configured_apply else 'muted' }}">{{ "Enabled" if boot.configured_apply else "Disabled" }}</span></dd>
     <dt>Last apply</dt>
-    <dd>{% if boot.last_apply %}{{ boot.last_apply.at|ts }} UTC
+    <dd>{% if boot.last_apply %}<time title="{{ boot.last_apply.at|ts }}">{{ boot.last_apply.at|ts }} UTC</time>
       {% for key, count in boot.last_apply.summary.items() %}<span class="badge">{{ key }} {{ count }}</span>{% endfor %}
       {% else %}<span class="muted">none since start</span>{% endif %}</dd>
   </dl>
 </div>
-{% if boot.configured and can_apply %}
-<p>
-  <button type="button" hx-post="/ui/bootstrap/apply?dry_run=true" hx-target="#bootstrap-result">Dry run</button>
-  <button type="button" class="danger" hx-post="/ui/bootstrap/apply?dry_run=false" hx-target="#bootstrap-result" hx-confirm="Apply the bootstrap file to the live configuration?">Apply</button>
-</p>
-{% endif %}
 <div id="bootstrap-result"></div>
 {% endblock %}

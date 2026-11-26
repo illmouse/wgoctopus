@@ -1,10 +1,29 @@
 {% extends "base.html" %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, modal %}
 {% block title %}Devices - wgoctopus{% endblock %}
-{% block body %}<h1>Devices</h1>
-{% if info.role == 'admin' %}<form method="post" action="/ui/devices/create"><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-<label>Name <input name="name" required maxlength="15"></label><label>Instance <select name="instance_id" required>{% for i in instances %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select></label>
-<label>Owner <select name="owner" required>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select></label><button>Create device</button></form>{% endif %}
-<table><thead><tr><th>Name</th><th>Instance</th><th>Owner</th><th>Enabled</th>{% if info.role == 'admin' %}<th>Assign owner</th><th>Actions</th>{% endif %}</tr></thead><tbody>
-{% for peer, instance_name in devices %}<tr><td>{{ peer.name }}</td><td>{{ instance_name }}</td><td>{{ peer.owner or '' }}</td><td>{{ peer.enabled }}</td>
-{% if info.role == 'admin' %}<td><form method="post" action="/ui/devices/{{ peer.id }}/owner"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><select name="owner"><option value="">Unassigned</option>{% for u in users %}<option value="{{ u.username }}" {% if peer.owner == u.username %}selected{% endif %}>{{ u.username }}</option>{% endfor %}</select><button>Assign</button></form></td><td><form method="post" action="/ui/devices/{{ peer.id }}/revoke"><input type="hidden" name="_csrf" value="{{ info.csrf }}"><button class="danger">Revoke</button></form></td>{% endif %}</tr>{% endfor %}
-</tbody></table>{% endblock %}
+{% block body %}
+{% call page_header("Devices", "Peer devices and ownership assignments") %}{% if info.role == 'admin' %}<button type="button" data-open-dialog="create-device">Add device</button>{% endif %}{% endcall %}
+{% if info.role == 'admin' %}
+{% call modal("create-device", "Create device") %}
+<form method="post" action="/ui/devices/create" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device created">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
+  <div class="form-row">
+    {% call form_field("Name", "name") %}<input name="name" required maxlength="15">{% endcall %}
+    {% call form_field("Instance", "instance_id") %}<select name="instance_id" required>{% for i in instances %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select>{% endcall %}
+    {% call form_field("Owner", "owner") %}<select name="owner" required>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>{% endcall %}
+  </div>
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Create device</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+</form>
+{% endcall %}
+{% endif %}
+<label class="search">Search devices<input type="search" placeholder="Device, instance or owner" data-table-search="#device-rows tr" aria-label="Search devices"></label>
+<div id="device-rows">{% call data_table(["Name", "Instance", "Owner", "Enabled"] + (["Assign owner", "Actions"] if info.role == 'admin' else [])) %}
+{% for peer, instance_name in devices %}<tr><td data-label="Name">{{ peer.name }}</td><td data-label="Instance">{{ instance_name }}</td><td data-label="Owner">{{ peer.owner or '—' }}</td><td data-label="Enabled"><span class="badge {{ 'ok' if peer.enabled else 'muted' }}">{{ 'Enabled' if peer.enabled else 'Disabled' }}</span></td>
+{% if info.role == 'admin' %}<td data-label="Assign owner"><div class="cell-actions"><button type="button" class="secondary sm" data-open-dialog="device-{{ peer.id }}">Change owner</button></div></td><td data-label="Actions">
+{% call modal("device-" ~ peer.id, "Manage " ~ peer.name) %}
+<form method="post" action="/ui/devices/{{ peer.id }}/owner" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("Owner", "owner") %}<select name="owner"><option value="">Unassigned</option>{% for u in users %}<option value="{{ u.username }}" {% if peer.owner == u.username %}selected{% endif %}>{{ u.username }}</option>{% endfor %}</select>{% endcall %}{% call form_actions() %}<div class="dialog-actions"><button>Assign</button><button type="button" class="secondary" data-close-dialog>Close</button></div>{% endcall %}</form>
+<form method="post" action="/ui/devices/{{ peer.id }}/revoke" class="dialog-danger" data-confirm-form="Revoke device {{ peer.name }}? The peer will be disabled." hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="cell-actions"><button class="danger">Revoke</button></div></form>
+{% endcall %}
+</td>{% endif %}</tr>{% else %}<tr><td data-label="Name" colspan="{{ 6 if info.role == 'admin' else 4 }}"><div class="empty-state"><h2>No devices</h2><p>Devices will appear when peers are created.</p></div></td></tr>{% endfor %}
+{% endcall %}</div>
+{% endblock %}

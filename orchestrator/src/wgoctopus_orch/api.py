@@ -1528,6 +1528,24 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
         def decline_op(s, ident):
             return user_call(users.decline_request, s, ident, None, None)
 
+        def ui_delete_instance(s, ident):
+            item = s.get(Instance, ident)
+            if not item:
+                raise HTTPException(404, "unknown instance")
+            if s.scalar(select(Peer.id).where(Peer.instance_id == ident)) or s.scalar(
+                select(Placement.id).where(Placement.instance_id == ident)
+            ):
+                raise HTTPException(409, "instance has peers or placements")
+            s.delete(item)
+
+        def ui_delete_node(s, ident):
+            item = s.get(Node, ident)
+            if not item:
+                raise HTTPException(404, "unknown node")
+            if s.scalar(select(Placement.id).where(Placement.node_id == ident)):
+                raise HTTPException(409, "node has placements")
+            s.delete(item)
+
         webui.mount(app, sessions=sessions, lookup=app_web_sessions.lookup, status=status_summary,
                     nodes=lambda s: [node(n, s) for n in s.scalars(select(Node).order_by(Node.name))],
                     node_view=node_view, provision=lambda: app.state.provision,
@@ -1535,7 +1553,8 @@ def create_app(*, session_factory=None, reconciler=None, crypto=None, migrate=No
                     instance_view=instance_view, peers_page=peers_page,
                     ops=SimpleNamespace(add_peer=add_peer_op, set_enabled=peer_enabled_op, remove_peer=peer_remove_op,
                                         config=peer_config_op, switch=switch_op, failover=failover_op, approve=approve_op,
-                                        decline=decline_op, bootstrap=bootstrap_file_op),
+                                         decline=decline_op, bootstrap=bootstrap_file_op,
+                                         delete_instance=ui_delete_instance, delete_node=ui_delete_node),
                     failovers=failovers_page, failover_info=failover_info, requests=requests_page,
                     bootstrap_info=lambda: dict(bootstrap_status(), configured_apply=alert_settings.bootstrap_apply),
                     save_failover_settings=save_failover_settings,
