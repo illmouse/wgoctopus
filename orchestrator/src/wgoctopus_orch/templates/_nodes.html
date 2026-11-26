@@ -1,6 +1,5 @@
 {% from "_components.html" import data_table %}
-{% set node_table %}
-{% call data_table(["Name", "Kind", "Mode", "State", "Healthy", "Last seen", "Revision", ""]) %}
+{% call data_table(["Name", "Kind", "Mode", "State", "Healthy", "Last seen", "Revision", ""], body_id="node-rows") %}
   {% for n in nodes %}
   <tr>
     <td data-label="Name"><a href="/ui/nodes/{{ n.id }}">{{ n.name }}</a></td>
@@ -14,5 +13,3 @@
   </tr>
   {% else %}<tr><td data-label="Name" colspan="8"><div class="empty-state"><h2>No nodes yet</h2><p>Add a node to start managing your fleet.</p></div></td></tr>{% endfor %}
 {% endcall %}
-{% endset %}
-{{ node_table|replace("<tbody>", '<tbody id="node-rows">')|safe }}
