@@ -18,7 +18,7 @@
     <div class="col-12 col-sm-6 col-xl-3"><div class="card card-sm"><div class="card-body"><div class="text-secondary">Peers</div><div class="h3 mb-0">{{ total }}</div></div></div></div>
   </div>
   <section class="card"><div class="card-header"><h2 class="card-title">Connection details</h2></div><div class="card-body"><div class="datagrid">
-    <div class="datagrid-item"><div class="datagrid-title">Public key</div><div class="datagrid-content"><code>{{ instance.public_key }}</code> <button type="button" class="btn btn-ghost-secondary btn-sm" data-copy="{{ instance.public_key }}">Copy</button></div></div>
+    <div class="datagrid-item"><div class="datagrid-title">Public key</div><div class="datagrid-content"><code class="d-block text-break mb-1">{{ instance.public_key }}</code><button type="button" class="btn btn-ghost-secondary btn-sm" data-copy="{{ instance.public_key }}">Copy</button></div></div>
     <div class="datagrid-item"><div class="datagrid-title">Endpoint host</div><div class="datagrid-content">{{ instance.endpoint_host or "—" }}</div></div>
     <div class="datagrid-item"><div class="datagrid-title">AWG version / MTU</div><div class="datagrid-content">{{ instance.awg_version }} / {{ instance.mtu }}</div></div>
     <div class="datagrid-item"><div class="datagrid-title">Egress / SNAT</div><div class="datagrid-content">{{ instance.egress_interface or "—" }} / {{ instance.snat_ip or "—" }}</div></div>

@@ -10,7 +10,7 @@
 <h2 class="page-subtitle">Nodes by state</h2>
 <div class="row row-cards mb-3">
 {% for name, count in summary.nodes_by_state.items() %}
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader text-break">{{ name }}</div><div class="h1 mb-0">{{ count }}</div></div></div></div>
+  <div class="col-12 col-sm-6 col-md-4 col-xl-3"><div class="card card-sm"><div class="card-body"><div class="subheader text-break">{{ name }}</div><div class="h1 mb-0">{{ count }}</div></div></div></div>
 {% endfor %}
 </div>
 <h2 class="page-subtitle">Recent events</h2>

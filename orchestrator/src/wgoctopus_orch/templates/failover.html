@@ -95,8 +95,8 @@
 {% call card("History (" ~ total ~ ")") %}
 {% call form_field("Search history", "history-search") %}<input class="form-control" id="history-search" type="search" placeholder="Instance, node or state" data-table-search="#history-rows tbody tr" aria-label="Search failover history">{% endcall %}
 <div class="btn-list mb-3">
-  <a class="btn btn-sm{% if not state %} btn-primary{% endif %}" href="/ui/failover">all</a>
-  {% for st in states %}<a class="btn btn-sm{% if st == state %} btn-primary{% endif %}" href="/ui/failover?state={{ st }}">{{ st }}</a>{% endfor %}
+  <a class="btn{% if not state %} btn-primary{% endif %}" href="/ui/failover">all</a>
+  {% for st in states %}<a class="btn{% if st == state %} btn-primary{% endif %}" href="/ui/failover?state={{ st }}">{{ st }}</a>{% endfor %}
 </div>
 <div id="history-rows">
 {% call data_table(["#", "Instance", "From → To", "State", "Created", "Decided", "By", "Error"]) %}
