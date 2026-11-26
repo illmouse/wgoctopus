@@ -13,7 +13,7 @@
 <p>This cannot be undone. Nodes with active placements cannot be deleted.</p>
 <form method="post" action="/ui/nodes/{{ node.id }}/delete" data-confirm-form="Delete node {{ node.name }} permanently?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Node deleted">
   <div class="form-errors text-danger" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-danger">Delete node</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-danger">Delete node</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 {% endcall %}
 {% endif %}

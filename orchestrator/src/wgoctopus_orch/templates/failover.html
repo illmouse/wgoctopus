@@ -18,7 +18,7 @@
   </div>
 {% endcall %}
 {% if can_admin %}
-{% call modal("failover-settings", "Failover settings") %}<form method="post" action="/ui/failover/settings" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover settings saved">
+{% call modal("failover-settings", "Failover settings") %}<form method="post" action="/ui/failover/settings" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover settings saved">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% for key, label in [('mode', 'Mode'), ('down_seconds', 'Down seconds'), ('proposal_ttl_seconds', 'Proposal TTL seconds'), ('cooldown_seconds', 'Cooldown seconds'), ('eval_interval', 'Evaluation interval seconds')] %}
@@ -33,7 +33,7 @@
     {% if settings.locked[key] %}<span class="text-secondary">set via env</span>{% endif %}
   {% endcall %}
   {% endfor %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Save settings</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Save settings</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>{% endcall %}
 {% endif %}
 
@@ -43,23 +43,23 @@
 {% endcall %}
 
 {% if can_operate %}
-{% call modal("manual-failover", "Manual failover") %}<form method="post" action="/ui/failover/manual" class="card" data-confirm-form="Switch this instance to the selected node?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover started">
+{% call modal("manual-failover", "Manual failover") %}<form method="post" action="/ui/failover/manual" data-confirm-form="Switch this instance to the selected node?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover started">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   {% call form_field("Target node", "node_id") %}<select class="form-select" name="node_id" required>{% for item in nodes if item.kind == 'awg' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   <input type="hidden" name="confirm" value="yes">
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Switch now</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Switch now</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>{% endcall %}
 {% endif %}
 
 {% if can_admin %}
-{% call modal("add-hop-link", "Add hop link") %}<form method="post" action="/ui/failover/links" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Hop link added">
+{% call modal("add-hop-link", "Add hop link") %}<form method="post" action="/ui/failover/links" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Hop link added">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% call form_field("Hop", "hop_id") %}<select class="form-select" name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Add hop link</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Add hop link</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>{% endcall %}
 {% endif %}
 {% call card("Hop links") %}
@@ -73,13 +73,13 @@
 {% endcall %}
 
 {% if can_admin %}
-{% call modal("add-probe", "Add probe") %}<form method="post" action="/ui/failover/probes" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Probe added">
+{% call modal("add-probe", "Add probe") %}<form method="post" action="/ui/failover/probes" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Probe added">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% call form_field("Hop", "hop_id") %}<select class="form-select" name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   {% call form_field("Runner node", "runner_node_id") %}<select class="form-select" name="runner_node_id" required>{% for item in nodes %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Add probe</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Add probe</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>{% endcall %}
 {% endif %}
 {% call card("Probes") %}
