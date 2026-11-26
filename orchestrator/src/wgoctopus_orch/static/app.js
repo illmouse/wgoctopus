@@ -1,8 +1,6 @@
 "use strict";
 const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || "";
 const root = document.documentElement;
-const savedTheme = localStorage.getItem("wgoctopus-theme");
-if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
 const toast = (message) => {
   const region = document.querySelector(".toast-region");
   if (!region) return;
@@ -43,16 +41,9 @@ if (document.querySelector("[data-ui-tab]")) {
 document.addEventListener("click", async (event) => {
   const themeToggle = event.target.closest("[data-theme-toggle]");
   if (themeToggle) {
-    const next = root.dataset.theme === "dark" || (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches) ? "light" : "dark";
-    root.dataset.theme = next;
+    const next = root.getAttribute("data-bs-theme") === "dark" ? "light" : "dark";
+    root.setAttribute("data-bs-theme", next);
     localStorage.setItem("wgoctopus-theme", next);
-    return;
-  }
-  const menuToggle = event.target.closest("[data-menu-toggle]");
-  if (menuToggle) {
-    const sidebar = document.getElementById("sidebar");
-    const open = sidebar.classList.toggle("open");
-    menuToggle.setAttribute("aria-expanded", String(open));
     return;
   }
   const tab = event.target.closest("[data-ui-tab]");
