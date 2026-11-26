@@ -1,114 +1,117 @@
 {% extends "base.html" %}
-{% from "_components.html" import page_header, card, data_table, form_field, form_actions, modal, empty_state %}
+{% from "_components.html" import page_header, card, data_table, form_field, form_actions, modal, empty_state, badge %}
 {% block title %}Failover - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("Failover", "Policy, proposals, routing links and probe health") %}<span class="badge {{ 'muted' if settings.mode == 'off' else 'ok' }}">{{ settings.mode|title }}</span>{% endcall %}
-{% call card() %}
-  <dl>
-    <dt>Mode</dt><dd><span class="badge {{ 'muted' if settings.mode == 'off' else 'ok' }}">{{ settings.mode }}</span>{% if not settings.active %} evaluator not running{% endif %}</dd>
-    <dt>Down for</dt><dd>{{ settings.down_seconds }} s before a proposal</dd>
-    <dt>Proposal TTL</dt><dd>{{ settings.proposal_ttl_seconds }} s</dd>
-    <dt>Cooldown</dt><dd>{{ settings.cooldown_seconds }} s</dd>
-    <dt>Evaluation interval</dt><dd>{{ settings.eval_interval }} s</dd>
-  </dl>
+{% call page_header("Failover", "Policy, proposals, routing links and probe health") %}
+  {{ badge(settings.mode|title, 'muted' if settings.mode == 'off' else 'ok') }}
+  {% if can_admin %}<button type="button" class="btn" data-open-dialog="failover-settings">Edit settings</button>{% endif %}
+  {% if can_operate %}<button type="button" class="btn btn-primary" data-open-dialog="manual-failover">Switch instance</button>{% endif %}
+  {% if can_admin %}<button type="button" class="btn" data-open-dialog="add-hop-link">Add hop link</button><button type="button" class="btn" data-open-dialog="add-probe">Add probe</button>{% endif %}
+{% endcall %}
+{% call card("Failover settings") %}
+  <div class="datagrid">
+    <div class="datagrid-item"><div class="datagrid-title">Mode</div><div class="datagrid-content">{{ badge(settings.mode, 'muted' if settings.mode == 'off' else 'ok') }}{% if not settings.active %} evaluator not running{% endif %}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">Down for</div><div class="datagrid-content">{{ settings.down_seconds }} s before a proposal</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">Proposal TTL</div><div class="datagrid-content">{{ settings.proposal_ttl_seconds }} s</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">Cooldown</div><div class="datagrid-content">{{ settings.cooldown_seconds }} s</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">Evaluation interval</div><div class="datagrid-content">{{ settings.eval_interval }} s</div></div>
+  </div>
 {% endcall %}
 {% if can_admin %}
-<h2>Failover settings</h2><div class="btn-row"><button type="button" data-open-dialog="failover-settings">Edit settings</button></div>
 {% call modal("failover-settings", "Failover settings") %}<form method="post" action="/ui/failover/settings" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover settings saved">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% for key, label in [('mode', 'Mode'), ('down_seconds', 'Down seconds'), ('proposal_ttl_seconds', 'Proposal TTL seconds'), ('cooldown_seconds', 'Cooldown seconds'), ('eval_interval', 'Evaluation interval seconds')] %}
   {% call form_field(label, key) %}
     {% if key == 'mode' %}
-    <select name="mode" {% if settings.locked[key] %}disabled{% endif %}>
+    <select class="form-select" name="mode" {% if settings.locked[key] %}disabled{% endif %}>
       {% for mode in ['off', 'confirm', 'auto'] %}<option value="{{ mode }}" {% if settings.mode == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}
     </select>
     {% else %}
-    <input type="number" name="{{ key }}" value="{{ settings[key] }}" min="{{ 0 if key == 'cooldown_seconds' else 1 }}" step="any" {% if settings.locked[key] %}disabled{% endif %}>
+    <input class="form-control" type="number" name="{{ key }}" value="{{ settings[key] }}" min="{{ 0 if key == 'cooldown_seconds' else 1 }}" step="any" {% if settings.locked[key] %}disabled{% endif %}>
     {% endif %}
-    {% if settings.locked[key] %}<span class="muted">set via env</span>{% endif %}
+    {% if settings.locked[key] %}<span class="text-secondary">set via env</span>{% endif %}
   {% endcall %}
   {% endfor %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Save settings</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Save settings</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
 </form>{% endcall %}
 {% endif %}
 
-<h2>Pending proposals</h2>
 <div id="failover-result"></div>
+{% call card("Pending proposals") %}
 {% include "_failover_pending.html" %}
+{% endcall %}
 
-<h2>Manual failover</h2>
 {% if can_operate %}
-<div class="btn-row"><button type="button" data-open-dialog="manual-failover">Switch instance</button></div>
 {% call modal("manual-failover", "Manual failover") %}<form method="post" action="/ui/failover/manual" class="card" data-confirm-form="Switch this instance to the selected node?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Failover started">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  {% call form_field("Instance", "instance_id") %}<select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_field("Target node", "node_id") %}<select name="node_id" required>{% for item in nodes if item.kind == 'awg' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Target node", "node_id") %}<select class="form-select" name="node_id" required>{% for item in nodes if item.kind == 'awg' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
   <input type="hidden" name="confirm" value="yes">
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Switch now</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Switch now</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
 </form>{% endcall %}
 {% endif %}
 
-<h2>Hop links</h2>
 {% if can_admin %}
-<div class="btn-row"><button type="button" data-open-dialog="add-hop-link">Add hop link</button></div>
 {% call modal("add-hop-link", "Add hop link") %}<form method="post" action="/ui/failover/links" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Hop link added">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  {% call form_field("Hop", "hop_id") %}<select name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_field("Instance", "instance_id") %}<select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Add hop link</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+  {% call form_field("Hop", "hop_id") %}<select class="form-select" name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Add hop link</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
 </form>{% endcall %}
 {% endif %}
+{% call card("Hop links") %}
 {% call data_table(["Hop", "Instance"] + (["Action"] if can_admin else [])) %}
 {% for link in links %}<tr><td data-label="Hop">{{ link.hop }}</td><td data-label="Instance">{{ link.instance }}</td>{% if can_admin %}<td data-label="Action">
   <form method="post" action="/ui/failover/links/{{ link.hop_id }}/{{ link.instance_id }}/delete" data-confirm-form="Remove this hop link?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Hop link removed">
-    <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">{% call form_actions() %}<button type="submit" class="danger sm">Delete</button>{% endcall %}
+    <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">{% call form_actions() %}<button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>{% endcall %}
   </form>
 </td>{% endif %}</tr>{% else %}<tr><td data-label="Hop" colspan="{{ 3 if can_admin else 2 }}">{{ empty_state("No hop links") }}</td></tr>{% endfor %}
 {% endcall %}
+{% endcall %}
 
-<h2>Probes</h2>
 {% if can_admin %}
-<div class="btn-row"><button type="button" data-open-dialog="add-probe">Add probe</button></div>
 {% call modal("add-probe", "Add probe") %}<form method="post" action="/ui/failover/probes" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Probe added">
   <div class="form-errors error" role="alert"></div>
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  {% call form_field("Hop", "hop_id") %}<select name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_field("Instance", "instance_id") %}<select name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_field("Runner node", "runner_node_id") %}<select name="runner_node_id" required>{% for item in nodes %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Add probe</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+  {% call form_field("Hop", "hop_id") %}<select class="form-select" name="hop_id" required>{% for item in nodes if item.kind == 'hop' %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for item in instances %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Runner node", "runner_node_id") %}<select class="form-select" name="runner_node_id" required>{% for item in nodes %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Add probe</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
 </form>{% endcall %}
 {% endif %}
+{% call card("Probes") %}
 {% call data_table(["#", "Hop", "Instance", "Runner", "Status"] + (["Action"] if can_admin else [])) %}
 {% for probe in probes %}<tr><td data-label="#">{{ probe.id }}</td><td data-label="Hop">{{ probe.hop }}</td><td data-label="Instance">{{ probe.instance }}</td><td data-label="Runner">{{ probe.runner }}</td><td data-label="Status">{{ probe.status }}</td>{% if can_admin %}<td data-label="Action">
   <form method="post" action="/ui/failover/probes/{{ probe.id }}/delete" data-confirm-form="Delete this probe?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Probe deleted">
-    <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">{% call form_actions() %}<button type="submit" class="danger sm">Delete</button>{% endcall %}
+    <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">{% call form_actions() %}<button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>{% endcall %}
   </form>
 </td>{% endif %}</tr>{% else %}<tr><td data-label="#" colspan="{{ 6 if can_admin else 5 }}">{{ empty_state("No probes") }}</td></tr>{% endfor %}
 {% endcall %}
+{% endcall %}
 
-<h2>History ({{ total }})</h2>
-<label class="search">Search history<input type="search" placeholder="Instance, node or state" data-table-search="#history-rows tr" aria-label="Search failover history"></label>
-<p class="pager">
-  <a href="/ui/failover">all</a>
-  {% for st in states %}<a href="/ui/failover?state={{ st }}"{% if st == state %} class="active"{% endif %}>{{ st }}</a>{% endfor %}
-</p>
+{% call card("History (" ~ total ~ ")") %}
+{% call form_field("Search history", "history-search") %}<input class="form-control" id="history-search" type="search" placeholder="Instance, node or state" data-table-search="#history-rows tbody tr" aria-label="Search failover history">{% endcall %}
+<div class="btn-list mb-3">
+  <a class="btn btn-sm{% if not state %} btn-primary{% endif %}" href="/ui/failover">all</a>
+  {% for st in states %}<a class="btn btn-sm{% if st == state %} btn-primary{% endif %}" href="/ui/failover?state={{ st }}">{{ st }}</a>{% endfor %}
+</div>
 <div id="history-rows">
 {% call data_table(["#", "Instance", "From → To", "State", "Created", "Decided", "By", "Error"]) %}
   {% for p in history %}
   <tr>
     <td data-label="#">{{ p.id }}</td><td data-label="Instance">{{ p.instance }}</td><td data-label="From → To">{{ p.from_node }} &rarr; {{ p.to_node }}</td>
-    <td data-label="State"><span class="badge {{ 'warn' if p.state == 'pending' else state_class.get(p.state, 'bad') }}">{{ p.state }}</span></td>
+    <td data-label="State">{{ badge(p.state, 'warn' if p.state == 'pending' else state_class.get(p.state, 'bad')) }}</td>
     <td data-label="Created">{{ p.created_at|ts }}</td><td data-label="Decided">{{ p.decided_at|ts }}</td><td data-label="By">{{ p.decided_by or "-" }}</td><td data-label="Error">{{ p.error or "" }}</td>
   </tr>
   {% else %}<tr><td data-label="#" colspan="8">{{ empty_state("No proposals") }}<p>Failover proposals will appear here.</p></td></tr>{% endfor %}
-  </tbody>
 {% endcall %}
 </div>
-<p class="pager">
-  {% if offset > 0 %}<a href="/ui/failover?state={{ state }}&amp;offset={{ [offset - page_size, 0]|max }}">&larr; Newer</a>{% endif %}
-  {% if offset + page_size < total %}<a href="/ui/failover?state={{ state }}&amp;offset={{ offset + page_size }}">Older &rarr;</a>{% endif %}
+<p class="d-flex gap-2 mt-3">
+  {% if offset > 0 %}<a class="btn btn-sm" href="/ui/failover?state={{ state }}&amp;offset={{ [offset - page_size, 0]|max }}">&larr; Newer</a>{% endif %}
+  {% if offset + page_size < total %}<a class="btn btn-sm" href="/ui/failover?state={{ state }}&amp;offset={{ offset + page_size }}">Older &rarr;</a>{% endif %}
 </p>
+{% endcall %}
 {% endblock %}
