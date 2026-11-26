@@ -3,35 +3,33 @@
 {% block title %}Nodes - wgoctopus{% endblock %}
 {% block body %}
 {% call page_header("Add node" if create_only else "Nodes", "Health, connectivity and configuration state") %}
-{% if can_create and not create_only %}<div class="btn-row"><a class="button" href="/ui/nodes/new">Add node</a></div>{% endif %}
+{% if can_create and not create_only %}<a class="btn btn-primary" href="/ui/nodes/new">Add node</a>{% endif %}
 {% endcall %}
 {% if create_only and can_create %}
 {% if form_error %}<p class="error" role="alert">{{ form_error }}</p>{% endif %}
-<section class="card">
+<div class="card"><div class="card-body">
 <form method="post" action="/ui/nodes/create">
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="form-row">
-    {% call form_field("Name", "name") %}<input id="name" name="name" required>{% endcall %}
-    {% call form_field("SSH host", "ssh_host") %}<input id="ssh_host" name="ssh_host" placeholder="-">{% endcall %}
-    {% call form_field("SSH user", "ssh_user") %}<input id="ssh_user" name="ssh_user" value="pull">{% endcall %}
-    {% call form_field("SSH password", "ssh_password") %}<input id="ssh_password" name="ssh_password" type="password" autocomplete="new-password">{% endcall %}
-    {% call form_field("SSH private key", "ssh_private_key") %}<textarea id="ssh_private_key" name="ssh_private_key" autocomplete="off"></textarea>{% endcall %}
-    {% call form_field("SSH public key", "ssh_public_key") %}<input id="ssh_public_key" name="ssh_public_key">{% endcall %}
-    {% call form_field("SSH port", "ssh_port") %}<input id="ssh_port" name="ssh_port" type="number" min="1" max="65535" value="22">{% endcall %}
-    {% call form_field("Management", "mgmt_mode") %}<select id="mgmt_mode" name="mgmt_mode"><option>push</option><option>pull</option><option>auto</option></select>{% endcall %}
-    {% call form_field("Agent port", "agent_port") %}<input id="agent_port" name="agent_port" type="number" min="1" max="65535" value="18080">{% endcall %}
-    {% call form_field("Harden SSH and host security during provisioning", "harden") %}<input id="harden" type="checkbox" name="harden" checked>{% endcall %}
-    {% call form_field("Kind", "kind") %}<select id="kind" name="kind"><option>awg</option><option>hop</option></select>{% endcall %}
-    {% call form_field("Enabled", "enabled") %}<input id="enabled" type="checkbox" name="enabled" checked>{% endcall %}
-  </div>
-  {% call form_actions() %}<button type="submit">Create node</button>{% endcall %}
+    {% call form_field("Name", "name") %}<input class="form-control" id="name" name="name" required>{% endcall %}
+    {% call form_field("SSH host", "ssh_host") %}<input class="form-control" id="ssh_host" name="ssh_host" placeholder="-">{% endcall %}
+    {% call form_field("SSH user", "ssh_user") %}<input class="form-control" id="ssh_user" name="ssh_user" value="pull">{% endcall %}
+    {% call form_field("SSH password", "ssh_password") %}<input class="form-control" id="ssh_password" name="ssh_password" type="password" autocomplete="new-password">{% endcall %}
+    {% call form_field("SSH private key", "ssh_private_key") %}<textarea class="form-control" id="ssh_private_key" name="ssh_private_key" autocomplete="off"></textarea>{% endcall %}
+    {% call form_field("SSH public key", "ssh_public_key") %}<input class="form-control" id="ssh_public_key" name="ssh_public_key">{% endcall %}
+    {% call form_field("SSH port", "ssh_port") %}<input class="form-control" id="ssh_port" name="ssh_port" type="number" min="1" max="65535" value="22">{% endcall %}
+    {% call form_field("Management", "mgmt_mode") %}<select class="form-select" id="mgmt_mode" name="mgmt_mode"><option>push</option><option>pull</option><option>auto</option></select>{% endcall %}
+    {% call form_field("Agent port", "agent_port") %}<input class="form-control" id="agent_port" name="agent_port" type="number" min="1" max="65535" value="18080">{% endcall %}
+    <label class="form-check mb-3"><input class="form-check-input" id="harden" type="checkbox" name="harden" checked><span class="form-check-label">Harden SSH and host security during provisioning</span></label>
+    {% call form_field("Kind", "kind") %}<select class="form-select" id="kind" name="kind"><option>awg</option><option>hop</option></select>{% endcall %}
+    <label class="form-check mb-3"><input class="form-check-input" id="enabled" type="checkbox" name="enabled" checked><span class="form-check-label">Enabled</span></label>
+  {% call form_actions() %}<button type="submit" class="btn btn-primary">Create node</button>{% endcall %}
 </form>
-</section>
+</div></div>
 {% endif %}
 {% if not create_only %}
-<label class="search">Search nodes<input type="search" placeholder="Name, kind or status" data-table-search="#node-rows tr" aria-label="Search nodes"></label>
+<div class="mb-3"><label class="form-label" for="node-search">Search nodes</label><input id="node-search" class="form-control" type="search" placeholder="Name, kind or status" data-table-search="#node-rows tr" aria-label="Search nodes"></div>
 <div hx-get="/ui/fragments/nodes" hx-trigger="every 10s" hx-swap="innerHTML">
 {% include "_nodes.html" %}
 </div>
-{% else %}<p><a class="button secondary" href="/ui/nodes">Cancel</a></p>{% endif %}
+{% else %}<p><a class="btn" href="/ui/nodes">Cancel</a></p>{% endif %}
 {% endblock %}
