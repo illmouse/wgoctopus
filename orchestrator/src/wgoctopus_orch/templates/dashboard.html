@@ -2,7 +2,7 @@
 {% from "_components.html" import page_header %}
 {% block title %}Dashboard - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("Dashboard", "Fleet health and recent activity") %}<a class="button secondary" href="/ui/nodes">View nodes</a><a class="button" href="/ui/instances">Manage instances</a>{% endcall %}
+{% call page_header("Dashboard", "Fleet health and recent activity") %}<a class="btn" href="/ui/nodes">View nodes</a><a class="btn btn-primary" href="/ui/instances">Manage instances</a>{% endcall %}
 <div id="status" hx-get="/ui/fragments/status" hx-trigger="every 10s" hx-swap="innerHTML">
 {% include "_status.html" %}
 </div>
