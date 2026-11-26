@@ -5,15 +5,13 @@
 {% call page_header("Bot users", "Telegram identities and access limits") %}{% if editable %}<button type="button" class="btn btn-primary" data-open-dialog="create-user">Add user</button>{% endif %}{% endcall %}
 {% if editable %}
 {% call modal("create-user", "Create bot user") %}
-<form method="post" action="/ui/users/create" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user created">
+<form method="post" action="/ui/users/create" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user created">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="card-body">
     {% call form_field("Username", "username") %}<input class="form-control" name="username" required>{% endcall %}
     {% call form_field("Telegram ID", "tg_id") %}<input class="form-control" name="tg_id" type="number">{% endcall %}
     {% call form_field("Role", "role") %}<select class="form-select" name="role"><option>user</option><option>admin</option></select>{% endcall %}
     {% call form_field("Config limit", "config_limit") %}<input class="form-control" name="config_limit" type="number" min="-1" value="3">{% endcall %}
-  </div>
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Create</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Create</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 {% endcall %}
 {% endif %}
@@ -22,16 +20,14 @@
 {% for u in users %}<tr><td data-label="Username">{{ u.username }}</td><td data-label="Telegram ID">{{ u.tg_id or "—" }}</td><td data-label="Role">{{ badge(u.role) }}</td><td data-label="Limit">{{ u.config_limit }}</td><td data-label="Status">{{ badge(u.status, 'ok' if u.status == 'enabled' else 'muted') }}</td>
 {% if editable %}<td data-label="Actions"><div class="btn-list"><button type="button" class="btn btn-ghost-secondary btn-sm" data-open-dialog="user-{{ u.username }}">Edit</button></div>
 {% call modal("user-" ~ u.username, "Edit " ~ u.username) %}
-<form method="post" action="/ui/users/{{ u.username }}/update" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user updated">
+<form method="post" action="/ui/users/{{ u.username }}/update" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Bot user updated">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="card-body">
     {% call form_field("Username", "username") %}<input class="form-control" name="username" value="{{ u.username }}" required>{% endcall %}
     {% call form_field("Telegram ID", "tg_id") %}<input class="form-control" name="tg_id" type="number" value="{{ u.tg_id or '' }}">{% endcall %}
     {% call form_field("Role", "role") %}<select class="form-select" name="role"><option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option><option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option></select>{% endcall %}
     {% call form_field("Config limit", "config_limit") %}<input class="form-control" name="config_limit" type="number" min="-1" value="{{ u.config_limit }}">{% endcall %}
     {% call form_field("Status", "status") %}<select class="form-select" name="status"><option value="enabled" {% if u.status == 'enabled' %}selected{% endif %}>enabled</option><option value="disabled" {% if u.status == 'disabled' %}selected{% endif %}>disabled</option></select>{% endcall %}
-  </div>
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Save changes</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Save changes</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 <form method="post" action="/ui/users/{{ u.username }}/delete" class="dialog-danger" data-confirm-form="Delete user {{ u.username }}?" data-toast-success="Bot user deleted" hx-boost="true" hx-target="body" hx-swap="innerHTML"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_actions() %}<button class="btn btn-danger">Delete user</button>{% endcall %}</form>
 {% endcall %}</td>{% endif %}</tr>{% else %}<tr><td data-label="Username" colspan="{{ 6 if editable else 5 }}">{{ empty_state("No users", "Users will appear as they are added.") }}</td></tr>{% endfor %}

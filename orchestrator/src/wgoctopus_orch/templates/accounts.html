@@ -5,14 +5,12 @@
 {% call page_header("Web accounts", "Console identities, roles and sign-in access") %}{% if editable %}<button type="button" class="btn btn-primary" data-open-dialog="create-account">Add account</button>{% endif %}{% endcall %}
 {% if editable %}
 {% call modal("create-account", "Create web account") %}
-<form method="post" action="/ui/accounts/create" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Web account created">
+<form method="post" action="/ui/accounts/create" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Web account created">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="card-body">
     {% call form_field("Username", "username") %}<input class="form-control" name="username" required maxlength="64">{% endcall %}
     {% call form_field("Temporary password", "password") %}<input class="form-control" type="password" name="password" required minlength="12">{% endcall %}
     {% call form_field("Role", "role") %}<select class="form-select" name="role"><option>viewer</option><option>operator</option><option>admin</option></select>{% endcall %}
-  </div>
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Create account</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Create account</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 {% endcall %}
 {% endif %}
@@ -20,11 +18,11 @@
 {% call data_table(["Username", "Role", "Source", "Enabled"] + (["Actions"] if editable else []), "account-rows") %}
 {% for a in accounts %}<tr><td data-label="Username">{{ a.username }}</td><td data-label="Role">{{ badge(a.role) }}</td><td data-label="Source">{{ a.source }}</td><td data-label="Enabled">{{ badge('Enabled' if a.enabled else 'Disabled', 'ok' if a.enabled else 'bad') }}</td>{% if editable %}<td data-label="Actions"><div class="btn-list"><button class="btn btn-ghost-secondary btn-sm" type="button" data-open-dialog="account-{{ a.id }}">Manage</button></div>
 {% call modal("account-" ~ a.id, "Manage " ~ a.username) %}
-<form method="post" action="/ui/accounts/{{ a.id }}/update" class="card" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated">
-  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="card-body">
+<form method="post" action="/ui/accounts/{{ a.id }}/update" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated">
+  <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
   {% call form_field("Role", "role") %}<select class="form-select" name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% endcall %}
   {% call form_field("Enabled", "enabled") %}<label class="form-check"><input class="form-check-input" type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}><span class="form-check-label">Enabled</span></label>{% endcall %}
-  </div>{% call form_actions() %}<div class="dialog-actions"><button type="submit" class="btn btn-primary">Save</button><button type="button" class="btn" data-close-dialog>Close</button></div>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Save</button><button type="button" class="btn" data-close-dialog>Close</button></div>
 </form>
 {% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password" class="card dialog-danger" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="card-body">{% call form_field("New password", "password") %}<input class="form-control" type="password" name="password" required minlength="12">{% endcall %}</div>{% call form_actions() %}<button class="btn btn-primary">Reset password</button>{% endcall %}</form>{% endif %}
 <form method="post" action="/ui/accounts/{{ a.id }}/delete" class="dialog-danger" data-confirm-form="Delete account {{ a.username }}?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_actions() %}<button class="btn btn-danger">Delete</button>{% endcall %}</form>
