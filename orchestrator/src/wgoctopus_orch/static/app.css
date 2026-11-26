@@ -15,10 +15,6 @@ dialog.app-dialog::backdrop{background:rgb(17 24 39 / 60%)}
 .htmx-request button[type=submit]{opacity:.72;cursor:progress}
 .htmx-request button[type=submit]::after{content:"";width:13px;height:13px;margin-left:var(--tblr-spacer-2);border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:app-spin .7s linear infinite}
 .skeleton{height:1rem;border-radius:var(--tblr-border-radius);background:linear-gradient(90deg,var(--tblr-bg-surface-secondary),var(--tblr-border-color),var(--tblr-bg-surface-secondary));background-size:200% 100%;animation:app-shimmer 1.2s infinite}
-.awg-generator-grid fieldset{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--tblr-spacer-2) var(--tblr-spacer-3)}
-.awg-generator-grid fieldset legend{grid-column:1/-1}
-.awg-generator-grid label:has(input[type=checkbox]){display:flex;align-items:center;gap:var(--tblr-spacer-2)}
-.awg-generator-grid input[type=checkbox]{width:auto}
 .awg-generator-grid button{justify-self:start}
 @keyframes app-spin{to{transform:rotate(360deg)}}
 @keyframes app-shimmer{to{background-position:-200% 0}}
@@ -30,5 +26,4 @@ dialog.app-dialog::backdrop{background:rgb(17 24 39 / 60%)}
   .data-table td:last-child{border-bottom:0}
   .data-table td::before{content:attr(data-label);display:block;margin-bottom:var(--tblr-spacer-1);color:var(--tblr-secondary);font-size:.78rem;font-weight:600}
   dialog.app-dialog{position:fixed;inset:auto 0 0;margin:0;width:100%;max-width:none;max-height:90dvh;overflow-y:auto;overscroll-behavior:contain;border-radius:var(--tblr-border-radius-lg) var(--tblr-border-radius-lg) 0 0;padding:var(--tblr-spacer-4) var(--tblr-spacer-4) calc(var(--tblr-spacer-3) + env(safe-area-inset-bottom))}
-  .awg-generator-grid fieldset{grid-template-columns:1fr}
 }
