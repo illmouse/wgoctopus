@@ -200,8 +200,19 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     api, config = _services(context)
     actor = await resolve_actor(update, api)
-    if actor:
-        await render(await handle_callback(query.data or "", actor, api, config), update, context)
+    if actor and query.data == "close":
+        try:
+            await query.delete_message()
+        except TelegramError:
+            await query.answer()
+    elif actor:
+        result = await handle_callback(query.data or "", actor, api, config)
+        await render(result, update, context)
+        if not isinstance(result, Toast):
+            try:
+                await query.answer()
+            except TelegramError:
+                pass
     else:
         await query.answer()
 

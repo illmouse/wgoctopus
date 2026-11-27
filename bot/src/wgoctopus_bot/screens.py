@@ -70,9 +70,9 @@ def main_menu(lang: str, role: str) -> Screen:
 
 
 def requests_screen(lang: str, requests: list[dict[str, Any]], tab: str, page: int, total: int, pending: int) -> Screen:
-    pages = max(1, (total + 9) // 10)
+    pages = max(1, ((pending if tab == "pending" else total) + 9) // 10)
     page = max(0, min(page, pages - 1))
-    rows = [[_button(t(lang, "requests_all", count=total), f"reqs:all:{page}"), _button(t(lang, "requests_pending", count=pending), f"reqs:pending:{page}")]]
+    rows = [[_button(t(lang, "requests_all", count=total), "reqs:all:0"), _button(t(lang, "requests_pending", count=pending), "reqs:pending:0")]]
     lines = []
     for request in requests:
         status = request.get("status", "pending")

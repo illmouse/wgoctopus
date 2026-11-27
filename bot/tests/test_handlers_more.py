@@ -93,10 +93,10 @@ async def test_text_triggers_input_and_cancel():
 async def test_callback_power_admin_and_document_delivery():
     upd, _, query = update(callback_data="menu")
     await callback(upd, ctx())
-    assert query.answer.await_count == 0
+    assert query.answer.await_count == 1
     api = FakeApi(); api.resolve = AsyncMock(side_effect=ApiError(404, "missing"))
     await callback(upd, ctx(api))
-    query.answer.assert_awaited_once()
+    assert query.answer.await_count == 2
     upd, msg, _ = update(text_value="/givemepowers")
     api = FakeApi(); api.admins = []
     await powers(upd, ctx(api))
@@ -131,3 +131,11 @@ async def test_lifecycle_logging_and_registration(caplog):
     with caplog.at_level(logging.ERROR):
         await error_handler(None, SimpleNamespace(error=err))
     assert "RuntimeError" in caplog.text and "supersecret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_callback_close_deletes_message():
+    upd, _, query = update(callback_data="close")
+    query.delete_message = AsyncMock()
+    await callback(upd, ctx())
+    query.delete_message.assert_awaited_once()
