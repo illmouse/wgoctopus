@@ -136,3 +136,13 @@ def _raises(error):
         raise error
 
     return fail
+
+
+@pytest.mark.asyncio
+async def test_admin_lists_beyond_api_page_limits():
+    api = FakeApi()
+    api.requests = {i: {"id": i, "status": "pending", "type": "access", "username": "u"} for i in range(1, 1201)}
+    api.devices_data = [{"id": i, "owner": "alice", "name": f"d{i}", "instance_id": 1} for i in range(1, 451)]
+    result = await handle_callback("menu:requests", ADMIN, api, CFG)
+    assert not isinstance(result, Toast)
+    assert not isinstance(await handle_callback("menu:devices", ADMIN, api, CFG), Toast)

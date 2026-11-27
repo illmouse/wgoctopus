@@ -145,7 +145,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         language = actor.lang
         buttons = [KeyboardButton(t(language, "devices")), KeyboardButton(t(language, "add"))]
         if actor.role == "admin": buttons.extend([KeyboardButton(t(language, "users")), KeyboardButton(t(language, "requests_menu", count=""))])
-        keyboard = ReplyKeyboardMarkup([buttons, [KeyboardButton(t(language, "limit"))]], resize_keyboard=True)
+        rows = [buttons] if actor.role == "admin" else [buttons, [KeyboardButton(t(language, "limit"))]]
+        keyboard = ReplyKeyboardMarkup(rows, resize_keyboard=True)
         await message.reply_text(t(language, "start"), reply_markup=keyboard)
 
 
@@ -214,7 +215,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if actor is None:
         return
     labels = {t(actor.lang, "devices"): "menu:devices", t(actor.lang, "add"): "create:self", t(actor.lang, "limit"): "reqlim"}
-    labels.update({"Requests": "menu:requests", "Заявки": "menu:requests"})
+    labels.update({"Requests": "menu:requests", "Заявки": "menu:requests", t(actor.lang, "users"): "menu:users"})
     if message.text in labels:
         context.user_data.pop("input", None)
         await render(await handle_callback(labels[message.text], actor, api, config), update, context)

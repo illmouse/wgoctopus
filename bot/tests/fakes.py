@@ -46,9 +46,11 @@ class FakeApi:
     async def devices(self, username: str) -> list[dict[str, Any]]:
         return [deepcopy(device) for device in self.devices_data if device["owner"] == username]
 
-    async def all_devices(self, **params: Any) -> dict[str, Any]:
+    async def all_devices(self, limit: int = 50, offset: int = 0, **params: Any) -> dict[str, Any]:
+        if limit > 200:
+            raise ApiError(422, "limit")
         items = deepcopy(self.devices_data)
-        return {"total": len(items), "items": items}
+        return {"total": len(items), "items": items[offset:offset + limit]}
 
     async def device(self, ident: int) -> dict[str, Any]:
         for device in self.devices_data:
@@ -127,6 +129,8 @@ class FakeApi:
         return deepcopy(self.requests[ident])
 
     async def list_requests(self, status: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        if limit > 500:
+            raise ApiError(422, "limit")
         items = sorted((r for r in self.requests.values() if status is None or r.get("status") == status), key=lambda r: r["id"])
         return deepcopy(items[offset:offset + limit])
 

@@ -132,8 +132,22 @@ async def _failover(data: str, actor: Actor, api: Any) -> Result:
     return ShowScreen(Screen(t(actor.lang, key, id=ident, actor=actor.username), []), True)
 
 
+async def _all_requests(api: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    while len(page := await api.list_requests(limit=500, offset=len(items))) == 500:
+        items += page
+    return items + page
+
+
+async def _all_devices(api: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    while len(page := (await api.all_devices(limit=200, offset=len(items)))["items"]) == 200:
+        items += page
+    return items + page
+
+
 async def _devices(actor: Actor, api: Any, flt: str = "all", page: int = 0) -> ShowScreen:
-    devices = (await api.all_devices(limit=1000, offset=0))["items"] if actor.role == "admin" else await api.devices(actor.username)
+    devices = await _all_devices(api) if actor.role == "admin" else await api.devices(actor.username)
     user = await api.get_user(actor.username)
     limit = int(user.get("config_limit", 3))
     screen = devices_screen(actor.lang, devices, flt, page, len(devices), limit, actor.role == "admin")
@@ -179,7 +193,7 @@ async def handle_callback(
             if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
             _, tab, raw_page = (data.split(":") + ["pending", "0"])[:3] if data.startswith("reqs:") else ("", "pending", "0")
             page = int(raw_page)
-            all_items = await api.list_requests(limit=100000, offset=0)
+            all_items = await _all_requests(api)
             pending = sum(item.get("status") == "pending" for item in all_items)
             items = await api.list_requests(status="pending" if tab == "pending" else None, limit=10, offset=page * 10)
             return ShowScreen(requests_screen(actor.lang, items, tab, page, len(all_items), pending), True)
@@ -307,7 +321,7 @@ async def _decide_request(data: str, actor: Actor, api: Any, config: Any) -> Res
 
 
 async def _request_view(actor: Actor, api: Any, tab: str, page: int) -> ShowScreen:
-    all_items = await api.list_requests(limit=100000, offset=0)
+    all_items = await _all_requests(api)
     pending = sum(item.get("status") == "pending" for item in all_items)
     items = await api.list_requests(status="pending" if tab == "pending" else None, limit=10, offset=page * 10)
     return ShowScreen(requests_screen(actor.lang, items, tab, page, len(all_items), pending), True)
