@@ -1,80 +1,141 @@
 {% extends "base.html" %}
-{% from "_components.html" import page_header, data_table, form_actions %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, badge, empty_state %}
 {% block title %}Instances - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("New instance" if new_only else "Instances", "Configure a new WireGuard service" if new_only else "WireGuard services across your fleet") %}{% if can_create and not new_only %}<a class="button" href="/ui/instances/new">Add instance</a>{% endif %}{% endcall %}
+{% call page_header("New instance" if new_only else "Instances", "Configure a new WireGuard service" if new_only else "WireGuard services across your fleet") %}{% if can_create and not new_only %}<a class="btn btn-primary" href="/ui/instances/new">Add instance</a>{% endif %}{% endcall %}
 {% if can_create and new_only %}
-{% if form_error %}<p class="error" role="alert">{{ form_error }}</p>{% endif %}
-<div class="btn-row" role="tablist" aria-label="Instance creation">
-  <button type="button" role="tab" aria-selected="true" aria-controls="generate-panel" data-awg-tab="generate">Generate</button>
-  <button type="button" role="tab" aria-selected="false" aria-controls="import-panel" data-awg-tab="import">Import file</button>
+{% if form_error %}<p class="text-danger" role="alert">{{ form_error }}</p>{% endif %}
+<div class="btn-list mb-3" role="tablist" aria-label="Instance creation">
+  <button type="button" class="btn btn-primary" role="tab" aria-selected="true" aria-controls="generate-panel" data-awg-tab="generate">Generate</button>
+  <button type="button" class="btn" role="tab" aria-selected="false" aria-controls="import-panel" data-awg-tab="import">Import file</button>
 </div>
 <div id="generate-panel" role="tabpanel" data-awg-panel="generate" class="create-layout">
-<section id="generate" class="card">
-  <h2>Generate</h2>
-  <form id="awg-generator" class="form-row awg-generator-grid">
-    <div class="form-field"><label>AWG version <select name="awg_version"><option>3.1</option><option>3.0</option><option>2.0</option></select></label></div>
-    <div class="form-field"><label>MTU <input name="mtu" type="number" min="576" max="9000" value="1280"></label></div>
-    <div class="form-field"><label>Mode <select name="mode"><option>normal</option><option>router</option><option>extreme</option></select></label></div>
-    <div class="form-field"><label>Junk level <input name="junk_level" type="range" min="0" max="15" value="5"><output>5</output></label></div>
-    <div class="form-field"><label>Junk presets <select name="junk_preset"><option value="">Custom</option><option>0</option><option>3</option><option>5</option><option>7</option><option>10</option></select></label></div>
-    <div class="form-field"><label>Size class <select name="size_class"><option value="med">Medium</option><option value="low">Small</option><option value="high">Large</option></select></label></div>
-    <fieldset><legend>Fixed S sizes</legend>
-      {% for n in range(1, 5) %}<label>S{{ n }} <input name="s{{ n }}" type="number" min="1" max="150"></label>{% endfor %}
-    </fieldset>
-    <div class="form-field"><label><input name="narrow_h" type="checkbox"> Narrow H ranges</label></div>
-    <div class="form-field"><label>Mimic profile <select name="mimic_profile">
-      {% for p in ["none","quic_initial","quic_0rtt","tls_client_hello","dtls_1_2","dtls_1_3","http3","dns_query","wireguard_noise","sip","stun","random"] %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
-    </select></label></div>
-    <div class="form-field"><label>Mimic host <input name="mimic_host" maxlength="253" placeholder="example.com"></label></div>
-    <fieldset><legend>AWG 3.x switchboard</legend>
-      {% for field, label in [("header_protection","Header protection"),("content_padding","Content padding"),("random_timings","Random timings"),("random_trailers","Random trailers"),("disable_cookies","Disable cookies"),("disable_h","Disable H"),("unite_s","Unite S")] %}
-      <label><input name="{{ field }}" type="checkbox" {% if field in ["header_protection", "content_padding", "random_timings", "random_trailers"] %}checked{% endif %}> {{ label }}</label>
-      {% endfor %}
-    </fieldset>
+{% macro scope(kind) %}{% if kind == "both" %}{{ badge("Server + clients", "warn") }}{% elif kind == "client" %}{{ badge("Client only", "info") }}{% elif kind == "local" %}{{ badge("Local", "muted") }}{% else %}{{ badge("Preset", "muted") }}{% endif %}{% endmacro %}
+{% macro gfield(label, name, kind, hint, cols="col-12 col-md-6") %}
+<div class="{{ cols }}"><label class="form-label d-flex flex-wrap align-items-center gap-2" for="g-{{ name }}"><span>{{ label }}</span>{{ scope(kind) }}</label>{{ caller() }}<div class="form-hint">{{ hint }}</div></div>
+{% endmacro %}
+{% macro gswitch(name, label, kind, since, hint, checked=false) %}
+<div class="col-12 col-lg-6"><label class="form-check mb-1"><input class="form-check-input" name="{{ name }}" type="checkbox" {% if checked %}checked{% endif %}><span class="form-check-label fw-medium">{{ label }}</span></label><div class="ps-4 d-flex flex-wrap gap-1 mb-1">{{ scope(kind) }} {{ badge(since, "muted") }}</div><div class="form-hint ps-4">{{ hint }}</div></div>
+{% endmacro %}
+<section id="generate" class="card"><div class="card-header"><h2 class="card-title">Generate</h2></div><div class="card-body">
+  <div class="alert alert-info" role="note">
+    <p class="mb-2">Generates AmneziaWG obfuscation parameters that make the tunnel harder for DPI to recognise. Each setting carries a badge showing where it matters:</p>
+    <ul class="mb-2">
+      <li>{{ scope("both") }} must be identical on the server and on every client (S1–S4, H1–H4, header key, random trailers). A mismatch silently drops packets.</li>
+      <li>{{ scope("client") }} is used by the sending side only (Jc/Jmin/Jmax, I1–I5, content padding). Give different clients different values; a junk train shared by everyone becomes a template of its own.</li>
+      <li>{{ scope("local") }} affects this side only (timers, cookies).</li>
+    </ul>
+    <p class="mb-2">The defaults are a sensible starting point. If a network blocks you, change one thing at a time and climb to the next AWG version only when the current one is blocked.</p>
+    <p class="mb-0 small">The generation algorithms and parameter descriptions are adapted from <a href="https://github.com/VAIPROG/Any-Tech-ARCHITECT" target="_blank" rel="noopener noreferrer">Any-Tech-ARCHITECT</a> by VAI_PROG (Vadim), MIT License. Thank you for the great work.</p>
+  </div>
+  <details class="mb-4">
+    <summary class="fw-medium">What do the generated parameters mean?</summary>
+    <div class="mt-3">
+    {% call data_table(["Parameter", "Scope", "What it does"]) %}
+      <tr><td data-label="Parameter"><code>Jc</code></td><td data-label="Scope">{{ scope("client") }}</td><td data-label="What it does">Number of junk UDP packets sent before a session starts. They blur the size and timing profile of connection setup. Costs traffic and setup time.</td></tr>
+      <tr><td data-label="Parameter"><code>Jmin</code>, <code>Jmax</code></td><td data-label="Scope">{{ scope("client") }}</td><td data-label="What it does">Length range of each junk packet. Jmin must be below Jmax, and Jmax no more than MTU − 28.</td></tr>
+      <tr><td data-label="Parameter"><code>S1</code>–<code>S4</code></td><td data-label="Scope">{{ scope("both") }}</td><td data-label="What it does">Random bytes prepended to handshake initiation (S1), response (S2), cookie reply (S3) and data packets (S4). They shift the standard WireGuard packet sizes (148, 92, 64, 32 bytes). The four resulting sizes must all differ.</td></tr>
+      <tr><td data-label="Parameter"><code>H1</code>–<code>H4</code></td><td data-label="Scope">{{ scope("both") }}</td><td data-label="What it does">Replace the WireGuard message type numbers 1–4 (init, response, cookie, data). From AWG 2.0 they are ranges and a random value is taken per packet. Ranges must not overlap or include 1–4.</td></tr>
+      <tr><td data-label="Parameter"><code>I1</code>–<code>I5</code></td><td data-label="Scope">{{ scope("client") }}</td><td data-label="What it does">Fake packets sent before the handshake to imitate another protocol. I1 carries the protocol signature, I2–I5 add entropy. The receiver does not parse them.</td></tr>
+      <tr><td data-label="Parameter"><code>HeaderProtectionKey</code></td><td data-label="Scope">{{ scope("both") }}</td><td data-label="What it does">Shared 32-byte key (AWG 3.0+) that encrypts packet types and service fields with ChaCha20.</td></tr>
+      <tr><td data-label="Parameter"><code>ContentPaddingAddition</code></td><td data-label="Scope">{{ scope("client") }}</td><td data-label="What it does">Random extra bytes inside the encrypted payload (AWG 3.0+).</td></tr>
+      <tr><td data-label="Parameter"><code>RekeyAfterTime</code>, <code>RekeyTimeout</code>, <code>RejectAfterTime</code>, <code>KeepaliveTimeout</code>, <code>MaxHandshakeAttempts</code></td><td data-label="Scope">{{ scope("local") }}</td><td data-label="What it does">Randomised protocol timers (AWG 3.0+). RejectAfterTime stays well above KeepaliveTimeout + RekeyTimeout, and RekeyAfterTime fires before RejectAfterTime.</td></tr>
+      <tr><td data-label="Parameter"><code>RandomTrailers</code></td><td data-label="Scope">{{ scope("both") }}</td><td data-label="What it does">Random tail on every packet (AWG 3.1). Both ends must enable it.</td></tr>
+      <tr><td data-label="Parameter"><code>DisableCookies</code></td><td data-label="Scope">{{ scope("local") }}</td><td data-label="What it does">Do not send Cookie Reply packets (AWG 3.1).</td></tr>
+    {% endcall %}
+    </div>
+  </details>
+  <form id="awg-generator" class="row g-3 awg-generator-grid">
+    <div class="col-12"><h3 class="h4 mb-0">Protocol</h3></div>
+    {% call gfield("AWG version", "awg_version", "both", "2.0 is understood by every AmneziaWG client: if it works and is not blocked, keep it. 3.0 adds header encryption, content padding and random timers; 3.1 adds random trailers and cookie control. The server and all clients must support the version you pick. Move up only when the current version gets blocked.") %}<select class="form-select" id="g-awg_version" name="awg_version"><option>3.1</option><option>3.0</option><option>2.0</option></select>{% endcall %}
+    {% call gfield("MTU", "mtu", "both", "Largest packet inside the tunnel. 1500 is plain Ethernet, 1420 suits PPPoE and mobile networks, 1280 is the IPv6 minimum and the safest. Lower it if the tunnel connects and ping works but heavy sites and downloads hang. Set automatically: 1500 for 2.0, 1280 otherwise.") %}<input class="form-control" id="g-mtu" name="mtu" type="number" min="576" max="9000" value="1280">{% endcall %}
+    {% call gfield("Mode", "mode", "preset", "Normal fits servers, PCs and phones. Router trims everything expensive (fewer junk packets, smaller sizes, only I1) for weak hardware such as routers and SBCs, at the cost of weaker obfuscation. Extreme lifts the usual caps: still valid, but often counterproductive because many junk packets slow setup and look anomalous. Treat it as an experiment.", "col-12") %}<select class="form-select" id="g-mode" name="mode"><option value="normal">Normal</option><option value="router">Router (weak hardware)</option><option value="extreme">Extreme (experimental)</option></select>{% endcall %}
+
+    <div class="col-12 mt-4"><h3 class="h4 mb-0">Junk packets before the handshake</h3></div>
+    {% call gfield("Junk level (Jc)", "junk_level", "client", "How many junk UDP packets the client sends before a session. 3–7 is usually enough. Higher values slow connection setup, especially on mobile networks. The generator varies the value by ±1.") %}<div class="d-flex align-items-center gap-3"><input class="form-range" id="g-junk_level" name="junk_level" type="range" min="0" max="15" value="5"><output class="fw-bold">5</output></div>{% endcall %}
+    {% call gfield("Junk preset", "junk_preset", "client", "Quick picks for the junk level: 0 off, 3 light, 5 balanced, 7 strong, 10 heavy. Choose Custom to use the slider.") %}<select class="form-select" id="g-junk_preset" name="junk_preset"><option value="">Custom</option><option value="0">0 – off</option><option value="3">3 – light</option><option value="5">5 – balanced</option><option value="7">7 – strong</option><option value="10">10 – heavy</option></select>{% endcall %}
+    {% call gfield("Junk size class", "size_class", "client", "Length range of the junk packets (Jmin–Jmax, never above MTU − 28). Small is roughly 64–512 bytes, Medium 128–1024, Large 256–1280. Medium is a good default; larger packets cost more traffic. On AWG 3.0+ it also sets the spread of padding and timers.", "col-12") %}<select class="form-select" id="g-size_class" name="size_class"><option value="med">Medium</option><option value="low">Small</option><option value="high">Large</option></select>{% endcall %}
+
+    <div class="col-12 mt-4"><h3 class="h4 mb-0">Packet padding (S1–S4)</h3><p class="text-secondary mb-0">Random bytes added in front of each packet type: S1 initiation (base 148 bytes), S2 response (92), S3 cookie reply (64), S4 data (32). Leave all empty and the generator picks collision-free values.</p></div>
+    <fieldset class="col-12"><legend class="form-label d-flex flex-wrap align-items-center gap-2"><span>Fixed S sizes (optional)</span>{{ scope("both") }}</legend><div class="row g-2">
+      {% for n, what in [(1, "initiation"), (2, "response"), (3, "cookie reply"), (4, "data")] %}<div class="col-6 col-md-3"><label class="form-label" for="g-s{{ n }}">S{{ n }} <span class="text-secondary fw-normal">{{ what }}</span></label><input class="form-control" id="g-s{{ n }}" name="s{{ n }}" type="number" min="1" max="150" placeholder="auto"></div>{% endfor %}
+      <div class="col-12"><div class="form-hint">Set values by hand only to match an existing peer. The resulting sizes (148+S1, 92+S2, 64+S3, 32+S4) must all differ, otherwise the fingerprint comes back. Large S1–S3 exceed the IPv6 minimum MTU and get fragmented. S4 is added to every data packet, so keep it at 32 or less to protect speed. With header protection every S must be at least 12.</div></div>
+    </div></fieldset>
+
+    <div class="col-12 mt-4"><h3 class="h4 mb-0">Message headers (H1–H4)</h3><p class="text-secondary mb-0">The WireGuard message types 1–4 are replaced with random ranges that must not overlap each other or hit 1–4.</p></div>
+    {{ gswitch("narrow_h", "Narrow H ranges", "both", "2.0+", "Makes the ranges narrower (about 1k–10k wide instead of up to 50k). With random trailers a wide range costs lost data packets, so narrowing helps only on 3.1 with header protection and only if you see drops. Obfuscation becomes weaker.") }}
+
+    <div class="col-12 mt-4"><h3 class="h4 mb-0">Mimicry (I1–I5)</h3><p class="text-secondary mb-0">Fake packets sent before the handshake so the first packets look like another protocol. The receiver ignores them. Pick what looks ordinary in the network you connect from.</p></div>
+    {% call gfield("Mimic profile", "mimic_profile", "client", "QUIC Initial is the safest universal choice, so use it if you are unsure. Choose another profile only when you know the network treats that protocol kindly (details below).") %}<select class="form-select" id="g-mimic_profile" name="mimic_profile">
+      {% for p, label in [("none","None – no mimicry"),("quic_initial","QUIC Initial – universal default"),("quic_0rtt","QUIC 0-RTT – session resumption"),("tls_client_hello","TLS 1.3 ClientHello – HTTPS start"),("dtls_1_2","DTLS 1.2 – WebRTC handshake"),("dtls_1_3","DTLS 1.3 – WebRTC handshake"),("http3","HTTP/3 – extended QUIC set"),("dns_query","DNS query – UDP port 53"),("wireguard_noise","Noise_IK – padding only"),("sip","SIP REGISTER – VoIP"),("stun","STUN/TURN – WebRTC prelude"),("random","Random profile")] %}<option value="{{ p }}">{{ label }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call gfield("Mimic host", "mimic_host", "client", "Optional. Host whose traffic is imitated: for QUIC, HTTP/3 and TLS a site that really speaks HTTP/3 or TLS 1.3; for DTLS a server that answers DTLS; for SIP a real SIP server; for STUN a STUN server on port 3478; for DNS a name that has an A record.") %}<input class="form-control" id="g-mimic_host" name="mimic_host" maxlength="253" placeholder="example.com">{% endcall %}
+    <div class="col-12"><details>
+      <summary class="fw-medium">Which mimic profile fits?</summary>
+      <div class="mt-3">
+      {% call data_table(["Profile", "Imitates", "Choose when"]) %}
+        <tr><td data-label="Profile">QUIC Initial</td><td data-label="Imitates">First packet of a QUIC connection (RFC 9000)</td><td data-label="Choose when">You are unsure. The most universal option.</td></tr>
+        <tr><td data-label="Profile">QUIC 0-RTT</td><td data-label="Imitates">Resumption of an earlier QUIC session</td><td data-label="Choose when">Plain QUIC Initial is not enough and you want a returning-visitor look.</td></tr>
+        <tr><td data-label="Profile">HTTP/3</td><td data-label="Imitates">Extended set of QUIC packet types for the chosen host</td><td data-label="Choose when">You want richer QUIC imitation tied to a specific host.</td></tr>
+        <tr><td data-label="Profile">TLS 1.3 ClientHello</td><td data-label="Imitates">Start of an HTTPS connection</td><td data-label="Choose when">UDP is rare on the network and TCP-looking handshakes pass more easily.</td></tr>
+        <tr><td data-label="Profile">DTLS 1.2 / 1.3</td><td data-label="Imitates">WebRTC handshake</td><td data-label="Choose when">The network sees many video calls.</td></tr>
+        <tr><td data-label="Profile">SIP REGISTER</td><td data-label="Imitates">VoIP registration, a compact packet chain</td><td data-label="Choose when">VoIP traffic is normal there.</td></tr>
+        <tr><td data-label="Profile">STUN/TURN</td><td data-label="Imitates">What WebRTC sends before a call</td><td data-label="Choose when">WebRTC is common and you want a light imitation.</td></tr>
+        <tr><td data-label="Profile">DNS query</td><td data-label="Imitates">An ordinary lookup on port 53</td><td data-label="Choose when">The network filters UDP but leaves port 53 open.</td></tr>
+        <tr><td data-label="Profile">Noise_IK</td><td data-label="Imitates">Nothing, only adds padding</td><td data-label="Choose when">You want no protocol signature at all.</td></tr>
+      {% endcall %}
+      </div>
+    </details></div>
+
+    <div class="col-12 mt-4"><h3 class="h4 mb-0">Protocol switches (AWG 3.x)</h3><p class="text-secondary mb-0">Each switch shows the first version that supports it. They are ignored by older versions.</p></div>
+    {{ gswitch("header_protection", "Header protection", "both", "3.0+", "A shared 32-byte key encrypts the packet type and service fields with ChaCha20, so DPI can no longer test its guess of the type. Every S must then be at least 12.", true) }}
+    {{ gswitch("content_padding", "Content padding", "client", "3.0+", "Adds random bytes inside the encrypted payload instead of aligning to 16 bytes, hiding real packet sizes. Costs some traffic. The other side does not need to know.", true) }}
+    {{ gswitch("random_timings", "Random timings", "local", "3.0+", "Rekey, timeout, reject and keepalive timers (WireGuard uses fixed 120 s, 5 s, 180 s, 10 s) become ranges, which removes the statistical rhythm.", true) }}
+    {{ gswitch("random_trailers", "Random trailers", "both", "3.1", "Adds a random tail to every packet. It must be enabled on both ends: a receiver without it drops the lengthened handshakes and the tunnel never comes up. Costs traffic and battery.", true) }}
+    {{ gswitch("disable_cookies", "Disable cookies", "local", "3.1", "Stops sending Cookie Reply, removing a fingerprint under active probing. Without cookies keepalive behind NAT degrades under load, so enable it deliberately.") }}
+    {{ gswitch("disable_h", "Disable H", "both", "3.1", "Sets H1–H4 to the standard 1, 2, 3, 4, like Amnezia VPN writes them. Reasonable only with header protection on. With trailers, wide H ranges would cost packets.") }}
+    {{ gswitch("unite_s", "Unite S", "both", "3.1", "Uses one shared padding value (12–32) for all four S. Off by default: if everyone follows the same advice, the shared value becomes a common fingerprint. Needs header protection and trailers.") }}
   </form>
-  <div class="btn-row"><button type="submit" form="awg-generator">Generate parameters</button><button id="awg-validate" type="button">Validate parameters</button></div>
-  <p>H ranges: <span id="awg-h-status" aria-live="polite">Not generated</span></p>
-  <div class="form-field"><label>Generated parameters (editable JSON)<textarea id="awg-obfuscation" rows="12" spellcheck="false">{}</textarea></label></div>
+  <div class="btn-list mt-4"><button class="btn btn-primary" type="submit" form="awg-generator">Generate parameters</button><button class="btn" id="awg-validate" type="button">Validate parameters</button></div>
+  <p class="mt-3">H ranges: <span id="awg-h-status" aria-live="polite">Not generated</span></p>
+  {% call form_field("Generated parameters (editable JSON)", "awg-obfuscation", "You can edit the JSON by hand and press Validate to check it. Created instances use whatever is in this box.") %}<textarea class="form-control" id="awg-obfuscation" rows="12" spellcheck="false">{}</textarea>{% endcall %}
   <ul id="awg-findings" aria-live="polite"></ul>
-</section>
-<section class="card">
-  <h2>Instance details</h2>
-  <form method="post" action="/ui/instances/create" id="instance-create" class="form-row">
+</div></section>
+<section class="card"><div class="card-header"><h2 class="card-title">Instance details</h2></div><div class="card-body">
+  <form method="post" action="/ui/instances/create" id="instance-create" class="row g-3">
     <input type="hidden" name="_csrf" value="{{ info.csrf }}">
     <input type="hidden" name="obfuscation_json" value="">
     <input type="hidden" name="awg_version" value="3.1">
     <input type="hidden" name="mtu" value="1280">
-    <div class="form-field"><label>Name <input name="name" required pattern="[A-Za-z0-9_=+.-]{1,15}"></label></div>
-    <div class="form-field"><label>Address <input name="address" required placeholder="10.0.0.1/24"></label></div>
-    <div class="form-field"><label>Listen port <input name="listen_port" type="number" min="1" max="65535" required></label></div>
-    <div class="form-field"><label>Endpoint host <input name="endpoint_host"></label></div>
-    {% call form_actions() %}<button type="submit">Create instance</button>{% endcall %}
+    <div class="col-12 col-md-6">{% call form_field("Name", "ci-name") %}<input class="form-control" id="ci-name" name="name" required pattern="[A-Za-z0-9_=+.-]{1,15}">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Address", "ci-address") %}<input class="form-control" id="ci-address" name="address" required placeholder="10.0.0.1/24">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Listen port", "ci-port") %}<input class="form-control" id="ci-port" name="listen_port" type="number" min="1" max="65535" required>{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Endpoint host", "ci-endpoint") %}<input class="form-control" id="ci-endpoint" name="endpoint_host">{% endcall %}</div>
+    <div class="col-12">{% call form_actions() %}<button class="btn btn-primary" type="submit">Create instance</button>{% endcall %}</div>
   </form>
-</section>
+</div></section>
 </div>
-<section id="import-panel" class="card" role="tabpanel" data-awg-panel="import" hidden>
-  <h2>Import file</h2>
-  <form method="post" action="/ui/instances/import" enctype="multipart/form-data" class="form-row">
+<section id="import-panel" class="card" role="tabpanel" data-awg-panel="import" hidden><div class="card-header"><h2 class="card-title">Import file</h2></div><div class="card-body">
+  <form method="post" action="/ui/instances/import" enctype="multipart/form-data" class="row g-3">
     <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-    <div class="form-field"><label>Name <input name="name" required maxlength="15"></label></div>
-    <div class="form-field"><label>Endpoint host override <input name="endpoint_host"></label></div>
-    <div class="form-field"><label>Server .conf (max 256 KiB) <input name="file" type="file" accept=".conf,text/plain" required></label></div>
-    {% call form_actions() %}<button type="submit">Import configuration</button>{% endcall %}
+    <div class="col-12 col-md-6">{% call form_field("Name", "im-name") %}<input class="form-control" id="im-name" name="name" required maxlength="15">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Endpoint host override", "im-endpoint") %}<input class="form-control" id="im-endpoint" name="endpoint_host">{% endcall %}</div>
+    <div class="col-12">{% call form_field("Server .conf (max 256 KiB)", "im-file") %}<input class="form-control" id="im-file" name="file" type="file" accept=".conf,text/plain" required>{% endcall %}</div>
+    <div class="col-12">{% call form_actions() %}<button class="btn btn-primary" type="submit">Import configuration</button>{% endcall %}</div>
   </form>
-</section>
+</div></section>
 {% endif %}
-{% if new_only %}<p><a class="button secondary" href="/ui/instances">Cancel</a></p>{% else %}
-<label class="search">Search instances<input type="search" placeholder="Name, address or endpoint" data-table-search="#instance-rows tr" aria-label="Search instances"></label>
+{% if new_only %}<p class="mt-3"><a class="btn" href="/ui/instances">Cancel</a></p>{% else %}
+<div class="mb-3">{% call form_field("Search instances", "instance-search") %}<input class="form-control" id="instance-search" type="search" placeholder="Name, address or endpoint" data-table-search="#instance-rows tr" aria-label="Search instances">{% endcall %}</div>
 {% call data_table(["Instance", "State", "AWG", "Address", "Endpoint", "Active node", "Peers"], body_id="instance-rows") %}
   {% for i in instances %}
   <tr class="instance-entry">
-    <td data-label="Instance"><a href="/ui/instances/{{ i.id }}"><strong>{{ i.name }}</strong></a><small class="muted"> · Port {{ i.listen_port }}</small></td>
-    <td data-label="State"><span class="badge {{ 'ok' if i.active_node_id else 'muted' }}">{{ 'Active' if i.active_node_id else 'Unassigned' }}</span></td><td data-label="AWG"><span class="badge muted">AWG {{ i.awg_version }}</span></td><td data-label="Address">{{ i.address }}</td><td data-label="Endpoint">{{ i.endpoint_host or "—" }}</td>
+    <td data-label="Instance"><a href="/ui/instances/{{ i.id }}"><strong>{{ i.name }}</strong></a><small class="text-secondary"> · Port {{ i.listen_port }}</small></td>
+     <td data-label="State">{{ badge('Active' if i.active_node_id else 'Unassigned', 'ok' if i.active_node_id else 'muted') }}</td><td data-label="AWG">{{ badge('AWG ' ~ i.awg_version) }}</td><td data-label="Address">{{ i.address }}</td><td data-label="Endpoint">{{ i.endpoint_host or "—" }}</td>
     <td data-label="Active node">{{ node_names.get(i.active_node_id, "-") if i.active_node_id else "-" }}</td>
     <td data-label="Peers">{{ i.peer_count }}</td>
   </tr>
-  {% else %}<tr><td data-label="Instance" colspan="7"><div class="empty-state"><h2>No instances yet</h2><p>Create an instance to get started.</p>{% if can_create %}<a href="/ui/instances/new" class="button">Add instance</a>{% endif %}</div></td></tr>{% endfor %}
+  {% else %}<tr><td data-label="Instance" colspan="7">{{ empty_state("No instances yet", "Create an instance to get started." ~ (" <a href=\"/ui/instances/new\" class=\"btn btn-primary\">Add instance</a>" if can_create else "")) }}</td></tr>{% endfor %}
 {% endcall %}
 {% endif %}
 {% endblock %}

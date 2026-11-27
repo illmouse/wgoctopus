@@ -18,7 +18,7 @@ wgoctopus-orch = "wgoctopus_orch.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wgoctopus_orch = ["templates/*.html", "static/*"]
+wgoctopus_orch = ["templates/*.html", "static/*", "static/vendor/tabler/*", "static/vendor/inter/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

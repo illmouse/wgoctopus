@@ -1,34 +1,31 @@
 {% extends "base.html" %}
-{% from "_components.html" import page_header, data_table, form_field, form_actions, modal %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, modal, badge, empty_state %}
 {% block title %}Accounts - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("Web accounts", "Console identities, roles and sign-in access") %}{% if editable %}<button type="button" data-open-dialog="create-account">Add account</button>{% endif %}{% endcall %}
+{% call page_header("Web accounts", "Console identities, roles and sign-in access") %}{% if editable %}<button type="button" class="btn btn-primary" data-open-dialog="create-account">Add account</button>{% endif %}{% endcall %}
 {% if editable %}
 {% call modal("create-account", "Create web account") %}
-<form method="post" action="/ui/accounts/create" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Web account created">
+<form method="post" action="/ui/accounts/create" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Web account created">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="form-row">
-    {% call form_field("Username", "username") %}<input name="username" required maxlength="64">{% endcall %}
-    {% call form_field("Temporary password", "password") %}<input type="password" name="password" required minlength="12">{% endcall %}
-    {% call form_field("Role", "role") %}<select name="role"><option>viewer</option><option>operator</option><option>admin</option></select>{% endcall %}
-  </div>
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Create account</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+    {% call form_field("Username", "username") %}<input class="form-control" name="username" required maxlength="64">{% endcall %}
+    {% call form_field("Temporary password", "password") %}<input class="form-control" type="password" name="password" required minlength="12">{% endcall %}
+    {% call form_field("Role", "role") %}<select class="form-select" name="role"><option>viewer</option><option>operator</option><option>admin</option></select>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Create account</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 {% endcall %}
 {% endif %}
-<label class="search">Search accounts<input type="search" placeholder="Username, role or source" data-table-search="#account-rows tr" aria-label="Search accounts"></label>
-<div id="account-rows">{% call data_table(["Username", "Role", "Source", "Enabled"] + (["Actions"] if editable else [])) %}
-{% for a in accounts %}<tr><td data-label="Username">{{ a.username }}</td><td data-label="Role"><span class="badge muted">{{ a.role }}</span></td><td data-label="Source">{{ a.source }}</td><td data-label="Enabled"><span class="badge {{ 'ok' if a.enabled else 'bad' }}">{{ 'Enabled' if a.enabled else 'Disabled' }}</span></td>{% if editable %}<td data-label="Actions"><div class="cell-actions"><button class="secondary sm" type="button" data-open-dialog="account-{{ a.id }}">Manage</button></div>
+<div class="mb-3">{% call form_field("Search accounts", "account-search") %}<input class="form-control" id="account-search" type="search" placeholder="Username, role or source" data-table-search="#account-rows tr" aria-label="Search accounts">{% endcall %}</div>
+{% call data_table(["Username", "Role", "Source", "Enabled"] + (["Actions"] if editable else []), "account-rows") %}
+{% for a in accounts %}<tr><td data-label="Username">{{ a.username }}</td><td data-label="Role">{{ badge(a.role) }}</td><td data-label="Source">{{ a.source }}</td><td data-label="Enabled">{{ badge('Enabled' if a.enabled else 'Disabled', 'ok' if a.enabled else 'bad') }}</td>{% if editable %}<td data-label="Actions"><div class="btn-list"><button class="btn btn-ghost-secondary btn-sm" type="button" data-open-dialog="account-{{ a.id }}">Manage</button></div>
 {% call modal("account-" ~ a.id, "Manage " ~ a.username) %}
-<form method="post" action="/ui/accounts/{{ a.id }}/update" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated">
+<form method="post" action="/ui/accounts/{{ a.id }}/update" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  {% call form_field("Role", "role") %}<select name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% endcall %}
-  {% call form_field("Enabled", "enabled") %}<input type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}>{% endcall %}
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Save</button><button type="button" class="secondary" data-close-dialog>Close</button></div>{% endcall %}
+  {% call form_field("Role", "role") %}<select class="form-select" name="role">{% for role in ['viewer','operator','admin'] %}<option {% if a.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% endcall %}
+  {% call form_field("Enabled", "enabled") %}<label class="form-check"><input class="form-check-input" type="checkbox" name="enabled" {% if a.enabled %}checked{% endif %}><span class="form-check-label">Enabled</span></label>{% endcall %}
+  <div class="dialog-actions"><button type="submit" form="delete-account-{{ a.id }}" class="btn btn-outline-danger me-auto">Delete</button><button type="submit" class="btn btn-primary">Save</button><button type="button" class="btn" data-close-dialog>Close</button></div>
 </form>
-{% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password" class="stack dialog-danger" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("New password", "password") %}<input type="password" name="password" required minlength="12">{% endcall %}{% call form_actions() %}<button>Reset password</button>{% endcall %}</form>{% endif %}
-<form method="post" action="/ui/accounts/{{ a.id }}/delete" class="dialog-danger" data-confirm-form="Delete account {{ a.username }}?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="cell-actions"><button class="danger">Delete</button></div></form>
-{% endcall %}</div>
-</td>{% endif %}</tr>{% else %}<tr><td data-label="Username" colspan="{{ 5 if editable else 4 }}"><div class="empty-state"><h2>No accounts</h2><p>Create a console account to grant access.</p></div></td></tr>{% endfor %}
+{% if a.source == 'local' %}<form method="post" action="/ui/accounts/{{ a.id }}/password" class="dialog-section" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("New password", "password") %}<input class="form-control" type="password" name="password" required minlength="12">{% endcall %}<div class="dialog-actions"><button class="btn btn-primary">Reset password</button></div></form>{% endif %}
+<form id="delete-account-{{ a.id }}" method="post" action="/ui/accounts/{{ a.id }}/delete" data-confirm-form="Delete account {{ a.username }}?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Account updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"></form>
+{% endcall %}</td>{% endif %}</tr>{% else %}<tr><td data-label="Username" colspan="{{ 5 if editable else 4 }}">{{ empty_state("No accounts", "Create a console account to grant access.") }}</td></tr>{% endfor %}
 {% endcall %}
 {% endblock %}

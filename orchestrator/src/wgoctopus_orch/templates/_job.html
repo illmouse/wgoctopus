@@ -1,17 +1,19 @@
+{% from "_components.html" import badge, card %}
 <div id="job"{% if job.state in active %} hx-get="/ui/fragments/jobs/{{ job.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  <p>
-    <span class="badge {{ state_class.get(job.state, 'bad') }}">{{ job.state }}</span>
-    started {{ job.started_at|ts }}, finished {{ job.finished_at|ts }}
-    {% if job.state in active %}<button type="button" class="danger" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="#cancel-result" hx-swap="innerHTML">Cancel</button>{% endif %}
-  </p>
-  <div id="cancel-result"></div>
-  {% if job.error %}<p class="error">{{ job.error }}</p>{% endif %}
-  <ol class="steps">
-  {% for step in job.steps %}
-    <li>
-      <span class="badge {{ state_class.get(step.state, 'bad') }}">{{ step.state }}</span> {{ step.name }}
-      {% if step.log %}<pre>{{ step.log }}</pre>{% endif %}
-    </li>
-  {% endfor %}
-  </ol>
+  {% call card() %}
+    <p>{{ badge(job.state, state_class.get(job.state, 'bad')) }}
+      started {{ job.started_at|ts }}, finished {{ job.finished_at|ts }}
+      {% if job.state in active %}<button type="button" class="btn btn-danger btn-sm" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="#cancel-result" hx-swap="innerHTML">Cancel</button>{% endif %}
+    </p>
+    <div id="cancel-result"></div>
+    {% if job.error %}<div class="alert alert-danger" role="alert">{{ job.error }}</div>{% endif %}
+    <ol>
+    {% for step in job.steps %}
+      <li>
+        {{ badge(step.state, state_class.get(step.state, 'bad')) }} {{ step.name }}
+        {% if step.log %}<pre>{{ step.log }}</pre>{% endif %}
+      </li>
+    {% endfor %}
+    </ol>
+  {% endcall %}
 </div>

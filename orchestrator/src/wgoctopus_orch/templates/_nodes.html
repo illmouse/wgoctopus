@@ -1,15 +1,15 @@
-{% from "_components.html" import data_table %}
+{% from "_components.html" import data_table, badge %}
 {% call data_table(["Name", "Kind", "Mode", "State", "Healthy", "Last seen", "Revision", ""], body_id="node-rows") %}
   {% for n in nodes %}
   <tr>
     <td data-label="Name"><a href="/ui/nodes/{{ n.id }}">{{ n.name }}</a></td>
-    <td data-label="Kind"><span class="badge muted">{{ n.kind }}</span></td>
+    <td data-label="Kind">{{ badge(n.kind) }}</td>
     <td data-label="Mode">{{ n.mgmt_mode }}</td>
-    <td data-label="State">{% if not n.enabled %}<span class="badge muted">disabled</span>{% elif n.reconciler %}<span class="badge {{ state_class.get(n.reconciler.state, 'bad') }}">{{ n.reconciler.state }}</span>{% else %}-{% endif %}</td>
-    <td data-label="Healthy"><span class="badge {{ 'ok' if n.observed and n.observed.healthy else 'warn' if n.enabled else 'muted' }}">{{ "Online" if n.observed and n.observed.healthy else "Offline" if n.enabled else "Disabled" }}</span></td>
+    <td data-label="State">{% if not n.enabled %}{{ badge("disabled") }}{% elif n.reconciler %}{{ badge(n.reconciler.state, state_class.get(n.reconciler.state, 'bad')) }}{% else %}-{% endif %}</td>
+    <td data-label="Healthy">{{ badge("Online" if n.observed and n.observed.healthy else "Offline" if n.enabled else "Disabled", 'ok' if n.observed and n.observed.healthy else 'warn' if n.enabled else 'muted') }}</td>
     <td data-label="Last seen">{% if n.observed and n.observed.last_seen_at %}<time data-relative-time="{{ n.observed.last_seen_at.isoformat() }}" title="{{ n.observed.last_seen_at|ts }}">{{ n.observed.last_seen_at|ts }}</time>{% else %}—{% endif %}</td>
     <td data-label="Revision">{{ n.observed.applied_revision if n.observed else "-" }} / {{ n.desired_revision if n.desired_revision is not none else "-" }}</td>
-    <td data-label="">{% if n.protected %}<span class="badge warn">protected</span>{% endif %}</td>
+    <td data-label="">{% if n.protected %}{{ badge("protected", "warn") }}{% endif %}</td>
   </tr>
   {% else %}<tr><td data-label="Name" colspan="8"><div class="empty-state"><h2>No nodes yet</h2><p>Add a node to start managing your fleet.</p></div></td></tr>{% endfor %}
 {% endcall %}

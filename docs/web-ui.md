@@ -140,3 +140,7 @@ Endpoints: `GET /auth/methods`, `GET /auth/oidc/login` (303 to the IdP, state bo
 - Data lives in `/tmp/wgoctopus-ui-stand`; override with `UI_STAND_DIR` and `UI_STAND_PORT`.
 - Seeded: 63 peers (more than one page), failover proposals in every state, access and limit requests (one with HTML in the name to check escaping).
 - The failover evaluator cancels seeded pending proposals on its first pass, so `up` tops up two pending ones (`scripts/ui-stand/pending.py`) after startup; the evaluator interval is set to a day to keep them.
+
+## AWG generator attribution
+
+The Generate section on `/ui/instances/new` is based on [Any-Tech-ARCHITECT](https://github.com/VAIPROG/Any-Tech-ARCHITECT) (VAI_PROG, MIT) and links to it; see [third-party-awg-generator.md](third-party-awg-generator.md).

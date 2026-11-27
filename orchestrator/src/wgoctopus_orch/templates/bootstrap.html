@@ -1,24 +1,21 @@
 {% extends "base.html" %}
-{% from "_components.html" import page_header %}
+{% from "_components.html" import page_header, card, badge %}
 {% block title %}Bootstrap - wgoctopus{% endblock %}
 {% block body %}
 {% call page_header("Bootstrap", "Apply fleet configuration from the configured bootstrap source.") %}
 {% if boot.configured and can_apply %}
-<div class="btn-row">
-<button type="button" class="secondary" hx-post="/ui/bootstrap/apply?dry_run=true" hx-target="#bootstrap-result">Dry run</button>
-<button type="button" class="danger" hx-post="/ui/bootstrap/apply?dry_run=false" hx-target="#bootstrap-result" hx-confirm="Apply the bootstrap file to the live configuration?">Apply</button>
+<div class="btn-list">
+<button type="button" class="btn" hx-post="/ui/bootstrap/apply?dry_run=true" hx-target="#bootstrap-result">Dry run</button>
+<button type="button" class="btn btn-danger" hx-post="/ui/bootstrap/apply?dry_run=false" hx-target="#bootstrap-result" hx-confirm="Apply the bootstrap file to the live configuration?">Apply</button>
 </div>
 {% endif %}
 {% endcall %}
-<div class="card">
-  <dl>
-    <dt>File</dt><dd>{% if boot.configured %}<code>{{ boot.file }}</code>{% else %}<span class="muted">not configured</span>{% endif %}</dd>
-    <dt>Apply on start</dt><dd><span class="badge {{ 'ok' if boot.configured_apply else 'muted' }}">{{ "Enabled" if boot.configured_apply else "Disabled" }}</span></dd>
-    <dt>Last apply</dt>
-    <dd>{% if boot.last_apply %}<time title="{{ boot.last_apply.at|ts }}">{{ boot.last_apply.at|ts }} UTC</time>
-      {% for key, count in boot.last_apply.summary.items() %}<span class="badge">{{ key }} {{ count }}</span>{% endfor %}
-      {% else %}<span class="muted">none since start</span>{% endif %}</dd>
-  </dl>
-</div>
+{% call card() %}<div class="datagrid">
+  <div class="datagrid-item"><div class="datagrid-title">File</div><div class="datagrid-content">{% if boot.configured %}<code>{{ boot.file }}</code>{% else %}<span class="text-secondary">not configured</span>{% endif %}</div></div>
+  <div class="datagrid-item"><div class="datagrid-title">Apply on start</div><div class="datagrid-content">{{ badge("Enabled" if boot.configured_apply else "Disabled", "ok" if boot.configured_apply else "muted") }}</div></div>
+  <div class="datagrid-item"><div class="datagrid-title">Last apply</div><div class="datagrid-content">{% if boot.last_apply %}<time title="{{ boot.last_apply.at|ts }}">{{ boot.last_apply.at|ts }} UTC</time>
+    {% for key, count in boot.last_apply.summary.items() %}{{ badge(key ~ " " ~ count) }}{% endfor %}
+    {% else %}<span class="text-secondary">none since start</span>{% endif %}</div></div>
+</div>{% endcall %}
 <div id="bootstrap-result"></div>
 {% endblock %}

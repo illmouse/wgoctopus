@@ -1,29 +1,27 @@
 {% extends "base.html" %}
-{% from "_components.html" import page_header, data_table, form_field, form_actions, modal %}
+{% from "_components.html" import page_header, data_table, form_field, form_actions, modal, badge, empty_state %}
 {% block title %}Devices - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("Devices", "Peer devices and ownership assignments") %}{% if info.role == 'admin' %}<button type="button" data-open-dialog="create-device">Add device</button>{% endif %}{% endcall %}
+{% call page_header("Devices", "Peer devices and ownership assignments") %}{% if info.role == 'admin' %}<button type="button" class="btn btn-primary" data-open-dialog="create-device">Add device</button>{% endif %}{% endcall %}
 {% if info.role == 'admin' %}
 {% call modal("create-device", "Create device") %}
-<form method="post" action="/ui/devices/create" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device created">
+<form method="post" action="/ui/devices/create" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device created">
   <div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">
-  <div class="form-row">
-    {% call form_field("Name", "name") %}<input name="name" required maxlength="15">{% endcall %}
-    {% call form_field("Instance", "instance_id") %}<select name="instance_id" required>{% for i in instances %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select>{% endcall %}
-    {% call form_field("Owner", "owner") %}<select name="owner" required>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>{% endcall %}
-  </div>
-  {% call form_actions() %}<div class="dialog-actions"><button type="submit">Create device</button><button type="button" class="secondary" data-close-dialog>Cancel</button></div>{% endcall %}
+    {% call form_field("Name", "name") %}<input class="form-control" name="name" required maxlength="15">{% endcall %}
+    {% call form_field("Instance", "instance_id") %}<select class="form-select" name="instance_id" required>{% for i in instances %}<option value="{{ i.id }}">{{ i.name }}</option>{% endfor %}</select>{% endcall %}
+    {% call form_field("Owner", "owner") %}<select class="form-select" name="owner" required>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>{% endcall %}
+  <div class="dialog-actions"><button type="submit" class="btn btn-primary">Create device</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
 </form>
 {% endcall %}
 {% endif %}
-<label class="search">Search devices<input type="search" placeholder="Device, instance or owner" data-table-search="#device-rows tr" aria-label="Search devices"></label>
-<div id="device-rows">{% call data_table(["Name", "Instance", "Owner", "Enabled"] + (["Assign owner", "Actions"] if info.role == 'admin' else [])) %}
-{% for peer, instance_name in devices %}<tr><td data-label="Name">{{ peer.name }}</td><td data-label="Instance">{{ instance_name }}</td><td data-label="Owner">{{ peer.owner or '—' }}</td><td data-label="Enabled"><span class="badge {{ 'ok' if peer.enabled else 'muted' }}">{{ 'Enabled' if peer.enabled else 'Disabled' }}</span></td>
-{% if info.role == 'admin' %}<td data-label="Assign owner"><div class="cell-actions"><button type="button" class="secondary sm" data-open-dialog="device-{{ peer.id }}">Change owner</button></div></td><td data-label="Actions">
+<div class="mb-3">{% call form_field("Search devices", "device-search") %}<input class="form-control" id="device-search" type="search" placeholder="Device, instance or owner" data-table-search="#device-rows tr" aria-label="Search devices">{% endcall %}</div>
+{% call data_table(["Name", "Instance", "Owner", "Enabled"] + (["Assign owner", "Actions"] if info.role == 'admin' else []), "device-rows") %}
+{% for peer, instance_name in devices %}<tr><td data-label="Name">{{ peer.name }}</td><td data-label="Instance">{{ instance_name }}</td><td data-label="Owner">{{ peer.owner or '—' }}</td><td data-label="Enabled">{{ badge('Enabled' if peer.enabled else 'Disabled', 'ok' if peer.enabled else 'muted') }}</td>
+{% if info.role == 'admin' %}<td data-label="Assign owner"><div class="btn-list"><button type="button" class="btn btn-ghost-secondary btn-sm" data-open-dialog="device-{{ peer.id }}">Change owner</button></div></td><td data-label="Actions">
 {% call modal("device-" ~ peer.id, "Manage " ~ peer.name) %}
-<form method="post" action="/ui/devices/{{ peer.id }}/owner" class="stack" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("Owner", "owner") %}<select name="owner"><option value="">Unassigned</option>{% for u in users %}<option value="{{ u.username }}" {% if peer.owner == u.username %}selected{% endif %}>{{ u.username }}</option>{% endfor %}</select>{% endcall %}{% call form_actions() %}<div class="dialog-actions"><button>Assign</button><button type="button" class="secondary" data-close-dialog>Close</button></div>{% endcall %}</form>
-<form method="post" action="/ui/devices/{{ peer.id }}/revoke" class="dialog-danger" data-confirm-form="Revoke device {{ peer.name }}? The peer will be disabled." hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><div class="cell-actions"><button class="danger">Revoke</button></div></form>
+<form method="post" action="/ui/devices/{{ peer.id }}/owner" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_field("Owner", "owner") %}<select class="form-select" name="owner"><option value="">Unassigned</option>{% for u in users %}<option value="{{ u.username }}" {% if peer.owner == u.username %}selected{% endif %}>{{ u.username }}</option>{% endfor %}</select>{% endcall %}<div class="dialog-actions"><button class="btn btn-primary">Assign</button><button type="button" class="btn" data-close-dialog>Close</button></div></form>
+<form method="post" action="/ui/devices/{{ peer.id }}/revoke" class="dialog-danger" data-confirm-form="Revoke device {{ peer.name }}? The peer will be disabled." hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Device updated"><div class="form-errors error" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}">{% call form_actions() %}<button class="btn btn-danger">Revoke</button>{% endcall %}</form>
 {% endcall %}
-</td>{% endif %}</tr>{% else %}<tr><td data-label="Name" colspan="{{ 6 if info.role == 'admin' else 4 }}"><div class="empty-state"><h2>No devices</h2><p>Devices will appear when peers are created.</p></div></td></tr>{% endfor %}
-{% endcall %}</div>
+</td>{% endif %}</tr>{% else %}<tr><td data-label="Name" colspan="{{ 6 if info.role == 'admin' else 4 }}">{{ empty_state("No devices", "Devices will appear when peers are created.") }}</td></tr>{% endfor %}
+{% endcall %}
 {% endblock %}
