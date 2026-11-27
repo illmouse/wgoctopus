@@ -19,6 +19,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from . import awgcps, awgparams, service, service_users, webauth
+from .i18n import pick_language, set_language, t
 from .models import Event, HopLink, Instance, Node, Peer, Placement, Probe, UserRequest, WebAccount
 from .provision import ProvisionError
 
@@ -55,6 +56,7 @@ def fmt_ts(value):
 def build_env():
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]), trim_blocks=True, lstrip_blocks=True)
     env.filters["ts"] = fmt_ts
+    env.globals["t"] = t
     return env
 
 
@@ -73,6 +75,11 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
     """
     env = build_env()
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+
+    @app.middleware("http")
+    async def language(request: Request, call_next):
+        set_language(pick_language(request.cookies.get("lang"), request.headers.get("accept-language")))
+        return await call_next(request)
 
     def render(template, request, info=None, status_code=200, **ctx):
         nav = NAV + ([("/ui/users", "Users"), ("/ui/accounts", "Accounts"), ("/ui/devices", "Devices")]
