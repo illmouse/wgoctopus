@@ -58,3 +58,9 @@ make ship IMAGE=example:tag HOST=user@host
 ## License
 
 MIT; see [LICENSE](LICENSE).
+
+## Credits
+
+The AWG parameter generator (algorithms, I1–I5 profiles, parameter descriptions) is adapted from
+[Any-Tech-ARCHITECT](https://github.com/VAIPROG/Any-Tech-ARCHITECT) by VAI_PROG (Vadim), MIT License.
+See [NOTICE](NOTICE) and [docs/third-party-awg-generator.md](docs/third-party-awg-generator.md).

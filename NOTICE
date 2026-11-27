@@ -7,6 +7,10 @@ VAIPROG/Any-Tech-ARCHITECT.
 
 CPS profile generation in orchestrator/src/wgoctopus_orch/awgcps.py is also adapted from VAIPROG/Any-Tech-ARCHITECT.
 
+The parameter explanations in the Generate section of
+orchestrator/src/wgoctopus_orch/templates/instances.html follow the texts of
+VAIPROG/Any-Tech-ARCHITECT (https://github.com/VAIPROG/Any-Tech-ARCHITECT).
+
 MIT License
 
 Copyright (c) 2026 VAI_PROG (Vadim)
