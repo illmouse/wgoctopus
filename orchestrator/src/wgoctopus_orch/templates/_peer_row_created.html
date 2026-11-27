@@ -1,7 +1,7 @@
 {% from "_components.html" import badge %}
 <tr>
-  <td data-label="Name">{{ peer.name }}</td><td data-label="Owner">{{ peer.owner or "—" }}</td><td data-label="Address"><code>{{ peer.allowed_ip }}</code></td>
-  <td data-label="Status">{{ badge("Enabled" if peer.enabled else "Disabled", 'ok' if peer.enabled else 'muted') }}</td>
-  <td data-label="Created">{{ peer.created_at }}</td>
-  <td data-label="Actions"><div class="btn-list"><a class="btn btn-ghost-secondary btn-sm" href="/ui/peers/{{ peer.id }}/config" download>Download config</a></div></td>
+  <td data-label="{{ t('peer.name') }}">{{ peer.name }}</td><td data-label="{{ t('peer.owner') }}">{{ peer.owner or "—" }}</td><td data-label="{{ t('peer.address') }}"><code>{{ peer.allowed_ip }}</code></td>
+  <td data-label="{{ t('peer.status') }}">{{ badge(t("peer.enabled") if peer.enabled else t("peer.disabled"), 'ok' if peer.enabled else 'muted') }}</td>
+  <td data-label="{{ t('peer.created_label') }}">{{ peer.created_at }}</td>
+  <td data-label="{{ t('common.actions') }}"><div class="btn-list"><a class="btn btn-ghost-secondary btn-sm" href="/ui/peers/{{ peer.id }}/config" download>{{ t("peer.download_config") }}</a></div></td>
 </tr>

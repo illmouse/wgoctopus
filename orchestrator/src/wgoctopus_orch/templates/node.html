@@ -3,48 +3,48 @@
 {% block title %}{{ node.name }} - wgoctopus{% endblock %}
 {% block body %}
 {% call page_header(node.name) %}
-{% if can_provision %}<button type="button" class="btn btn-danger" data-open-dialog="delete-node">Delete node</button>{% endif %}
-<a class="btn" href="/ui/nodes">All nodes</a>
+{% if can_provision %}<button type="button" class="btn btn-danger" data-open-dialog="delete-node">{{ t("node.delete") }}</button>{% endif %}
+<a class="btn" href="/ui/nodes">{{ t("node.all_nodes") }}</a>
 {% endcall %}
-<p><a href="/ui/nodes">Nodes</a> / {{ node.name }}</p>
+<p><a href="/ui/nodes">{{ t("nodes.title") }}</a> / {{ node.name }}</p>
 {% if node.protected %}{{ badge("protected", "warn") }}{% endif %}{% if not node.enabled %}{{ badge("disabled") }}{% endif %}
 {% if can_provision %}
-{% call modal("delete-node", "Delete " ~ node.name ~ "?") %}
-<p>This cannot be undone. Nodes with active placements cannot be deleted.</p>
-<form method="post" action="/ui/nodes/{{ node.id }}/delete" data-confirm-form="Delete node {{ node.name }} permanently?" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="Node deleted">
+{% call modal("delete-node", t("node.delete_title", name=node.name)) %}
+<p>{{ t("node.delete_warning") }}</p>
+<form method="post" action="/ui/nodes/{{ node.id }}/delete" data-confirm-form="{{ t('node.delete_confirm', name=node.name) }}" hx-boost="true" hx-target="body" hx-swap="innerHTML" data-toast-success="{{ t('node.deleted') }}">
   <div class="form-errors text-danger" role="alert"></div><input type="hidden" name="_csrf" value="{{ info.csrf }}"><input type="hidden" name="confirm" value="yes">
-  <div class="dialog-actions"><button type="submit" class="btn btn-danger">Delete node</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
+  <div class="dialog-actions"><button type="submit" class="btn btn-danger">{{ t("node.delete") }}</button><button type="button" class="btn" data-close-dialog>{{ t("common.cancel") }}</button></div>
 </form>
 {% endcall %}
 {% endif %}
 <div class="card mb-3"><div class="card-body"><div class="datagrid">
-    <div class="datagrid-item"><div class="datagrid-title">Kind</div><div class="datagrid-content">{{ node.kind }}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Management</div><div class="datagrid-content">{{ node.mgmt_mode }}{% if node.mgmt_mode != "pull" %} ({{ node.ssh_user }}@{{ node.ssh_host }}:{{ node.ssh_port }}){% endif %}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Agent port</div><div class="datagrid-content">{{ node.agent_port }}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Egress interface</div><div class="datagrid-content">{{ node.egress_interface or "-" }}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Reconciler</div><div class="datagrid-content">{% if node.reconciler %}{{ badge(node.reconciler.state, state_class.get(node.reconciler.state, 'bad')) }} failures: {{ node.reconciler.consecutive_failures }}{% else %}-{% endif %}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Revision (applied / desired)</div><div class="datagrid-content">{{ node.observed.applied_revision if node.observed else "-" }} / {{ node.desired_revision if node.desired_revision is not none else "-" }}</div></div>
-    <div class="datagrid-item"><div class="datagrid-title">Last seen</div><div class="datagrid-content">{% if node.observed and node.observed.last_seen_at %}<time data-relative-time="{{ node.observed.last_seen_at.isoformat() }}" title="{{ node.observed.last_seen_at|ts }}">{{ node.observed.last_seen_at|ts }}</time>{% else %}—{% endif %}</div></div>
-    {% if node.observed and node.observed.last_error %}<div class="datagrid-item"><div class="datagrid-title">Last error</div><div class="datagrid-content text-danger">{{ node.observed.last_error }}</div></div>{% endif %}
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.kind") }}</div><div class="datagrid-content">{{ node.kind }}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.management") }}</div><div class="datagrid-content">{{ node.mgmt_mode }}{% if node.mgmt_mode != "pull" %} ({{ node.ssh_user }}@{{ node.ssh_host }}:{{ node.ssh_port }}){% endif %}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.agent_port") }}</div><div class="datagrid-content">{{ node.agent_port }}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.egress_interface") }}</div><div class="datagrid-content">{{ node.egress_interface or "-" }}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.reconciler") }}</div><div class="datagrid-content">{% if node.reconciler %}{{ badge(node.reconciler.state, state_class.get(node.reconciler.state, 'bad')) }} {{ t("node.failures") }}: {{ node.reconciler.consecutive_failures }}{% else %}-{% endif %}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.revision") }}</div><div class="datagrid-content">{{ node.observed.applied_revision if node.observed else "-" }} / {{ node.desired_revision if node.desired_revision is not none else "-" }}</div></div>
+    <div class="datagrid-item"><div class="datagrid-title">{{ t("node.last_seen") }}</div><div class="datagrid-content">{% if node.observed and node.observed.last_seen_at %}<time data-relative-time="{{ node.observed.last_seen_at.isoformat() }}" title="{{ node.observed.last_seen_at|ts }}">{{ node.observed.last_seen_at|ts }}</time>{% else %}—{% endif %}</div></div>
+    {% if node.observed and node.observed.last_error %}<div class="datagrid-item"><div class="datagrid-title">{{ t("node.last_error") }}</div><div class="datagrid-content text-danger">{{ node.observed.last_error }}</div></div>{% endif %}
   </div></div></div>
-<h2 class="mb-3">Provisioning</h2>
+<h2 class="mb-3">{{ t("node.provisioning") }}</h2>
 {% if can_provision and node.mgmt_mode != "pull" %}
 <div class="btn-list mb-3">
   {% if node.protected %}
-  <button type="button" class="btn btn-danger" hx-post="/ui/nodes/{{ node.id }}/provision?confirm=true" hx-target="#action-result" hx-confirm="This node is protected. Provision it anyway?">Provision protected node</button>
+  <button type="button" class="btn btn-danger" hx-post="/ui/nodes/{{ node.id }}/provision?confirm=true" hx-target="#action-result" hx-confirm="{{ t('node.provision_protected_confirm') }}">{{ t("node.provision_protected") }}</button>
   {% else %}
-  <button type="button" class="btn btn-primary" hx-post="/ui/nodes/{{ node.id }}/provision" hx-target="#action-result">Provision</button>
+  <button type="button" class="btn btn-primary" hx-post="/ui/nodes/{{ node.id }}/provision" hx-target="#action-result">{{ t("node.provision") }}</button>
   {% endif %}
 </div>
 <div id="action-result"></div>
 {% endif %}
-{% call data_table(["Job", "State", "Started", "Finished", "Error"]) %}
+{% call data_table([t("node.job"), t("node.state"), t("node.started"), t("node.finished"), t("node.error")]) %}
   {% for j in jobs %}
   <tr>
-    <td data-label="Job">{% if can_provision %}<a href="/ui/jobs/{{ j.id }}">#{{ j.id }}</a>{% else %}#{{ j.id }}{% endif %}</td>
-    <td data-label="State">{{ badge(j.state, state_class.get(j.state, 'bad')) }}</td>
-    <td data-label="Started">{{ j.started_at|ts }}</td><td data-label="Finished">{{ j.finished_at|ts }}</td><td data-label="Error">{{ j.error or "" }}</td>
+    <td data-label="{{ t('node.job') }}">{% if can_provision %}<a href="/ui/jobs/{{ j.id }}">#{{ j.id }}</a>{% else %}#{{ j.id }}{% endif %}</td>
+    <td data-label="{{ t('node.state') }}">{{ badge(j.state, state_class.get(j.state, 'bad')) }}</td>
+    <td data-label="{{ t('node.started') }}">{{ j.started_at|ts }}</td><td data-label="{{ t('node.finished') }}">{{ j.finished_at|ts }}</td><td data-label="{{ t('node.error') }}">{{ j.error or "" }}</td>
   </tr>
-  {% else %}<tr><td data-label="Job" colspan="5" class="text-secondary">Never provisioned</td></tr>{% endfor %}
+  {% else %}<tr><td data-label="{{ t('node.job') }}" colspan="5" class="text-secondary">{{ t("node.never_provisioned") }}</td></tr>{% endfor %}
 {% endcall %}
 {% endblock %}

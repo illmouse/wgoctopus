@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_components.html" import page_header %}
-{% block title %}Dashboard - wgoctopus{% endblock %}
+{% block title %}{{ t("dashboard.page_title") }}{% endblock %}
 {% block body %}
-{% call page_header("Dashboard", "Fleet health and recent activity") %}<a class="btn" href="/ui/nodes">View nodes</a><a class="btn btn-primary" href="/ui/instances">Manage instances</a>{% endcall %}
+{% call page_header(t("dashboard.header"), t("dashboard.subtitle")) %}<a class="btn" href="/ui/nodes">{{ t("dashboard.view_nodes") }}</a><a class="btn btn-primary" href="/ui/instances">{{ t("dashboard.manage_instances") }}</a>{% endcall %}
 <div id="status" hx-get="/ui/fragments/status" hx-trigger="every 10s" hx-swap="innerHTML">
 {% include "_status.html" %}
 </div>

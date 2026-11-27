@@ -1,35 +1,35 @@
 {% extends "base.html" %}
 {% from "_components.html" import page_header, form_field, form_actions %}
-{% block title %}Nodes - wgoctopus{% endblock %}
+{% block title %}{{ t("nodes.title") }} - wgoctopus{% endblock %}
 {% block body %}
-{% call page_header("Add node" if create_only else "Nodes", "Health, connectivity and configuration state") %}
-{% if can_create and not create_only %}<a class="btn btn-primary" href="/ui/nodes/new">Add node</a>{% endif %}
+{% call page_header(t("nodes.add") if create_only else t("nodes.title"), t("nodes.description")) %}
+{% if can_create and not create_only %}<a class="btn btn-primary" href="/ui/nodes/new">{{ t("nodes.add") }}</a>{% endif %}
 {% endcall %}
 {% if create_only and can_create %}
 {% if form_error %}<p class="error" role="alert">{{ form_error }}</p>{% endif %}
 <div class="card"><div class="card-body">
 <form method="post" action="/ui/nodes/create">
   <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-    {% call form_field("Name", "name") %}<input class="form-control" id="name" name="name" required>{% endcall %}
-    {% call form_field("SSH host", "ssh_host") %}<input class="form-control" id="ssh_host" name="ssh_host" placeholder="-">{% endcall %}
-    {% call form_field("SSH user", "ssh_user") %}<input class="form-control" id="ssh_user" name="ssh_user" value="pull">{% endcall %}
-    {% call form_field("SSH password", "ssh_password") %}<input class="form-control" id="ssh_password" name="ssh_password" type="password" autocomplete="new-password">{% endcall %}
-    {% call form_field("SSH private key", "ssh_private_key") %}<textarea class="form-control" id="ssh_private_key" name="ssh_private_key" autocomplete="off"></textarea>{% endcall %}
-    {% call form_field("SSH public key", "ssh_public_key") %}<input class="form-control" id="ssh_public_key" name="ssh_public_key">{% endcall %}
-    {% call form_field("SSH port", "ssh_port") %}<input class="form-control" id="ssh_port" name="ssh_port" type="number" min="1" max="65535" value="22">{% endcall %}
-    {% call form_field("Management", "mgmt_mode") %}<select class="form-select" id="mgmt_mode" name="mgmt_mode"><option>push</option><option>pull</option><option>auto</option></select>{% endcall %}
-    {% call form_field("Agent port", "agent_port") %}<input class="form-control" id="agent_port" name="agent_port" type="number" min="1" max="65535" value="18080">{% endcall %}
-    <label class="form-check mb-3"><input class="form-check-input" id="harden" type="checkbox" name="harden" checked><span class="form-check-label">Harden SSH and host security during provisioning</span></label>
-    {% call form_field("Kind", "kind") %}<select class="form-select" id="kind" name="kind"><option>awg</option><option>hop</option></select>{% endcall %}
-    <label class="form-check mb-3"><input class="form-check-input" id="enabled" type="checkbox" name="enabled" checked><span class="form-check-label">Enabled</span></label>
-  {% call form_actions() %}<button type="submit" class="btn btn-primary">Create node</button>{% endcall %}
+    {% call form_field(t("nodes.name"), "name") %}<input class="form-control" id="name" name="name" required>{% endcall %}
+    {% call form_field(t("nodes.ssh_host"), "ssh_host") %}<input class="form-control" id="ssh_host" name="ssh_host" placeholder="{{ t('nodes.ssh_host_placeholder') }}">{% endcall %}
+    {% call form_field(t("nodes.ssh_user"), "ssh_user") %}<input class="form-control" id="ssh_user" name="ssh_user" value="pull">{% endcall %}
+    {% call form_field(t("nodes.ssh_password"), "ssh_password") %}<input class="form-control" id="ssh_password" name="ssh_password" type="password" autocomplete="new-password">{% endcall %}
+    {% call form_field(t("nodes.ssh_private_key"), "ssh_private_key") %}<textarea class="form-control" id="ssh_private_key" name="ssh_private_key" autocomplete="off"></textarea>{% endcall %}
+    {% call form_field(t("nodes.ssh_public_key"), "ssh_public_key") %}<input class="form-control" id="ssh_public_key" name="ssh_public_key">{% endcall %}
+    {% call form_field(t("nodes.ssh_port"), "ssh_port") %}<input class="form-control" id="ssh_port" name="ssh_port" type="number" min="1" max="65535" value="22">{% endcall %}
+    {% call form_field(t("nodes.management"), "mgmt_mode") %}<select class="form-select" id="mgmt_mode" name="mgmt_mode"><option>push</option><option>pull</option><option>auto</option></select>{% endcall %}
+    {% call form_field(t("nodes.agent_port"), "agent_port") %}<input class="form-control" id="agent_port" name="agent_port" type="number" min="1" max="65535" value="18080">{% endcall %}
+    <label class="form-check mb-3"><input class="form-check-input" id="harden" type="checkbox" name="harden" checked><span class="form-check-label">{{ t("nodes.harden_hint") }}</span></label>
+    {% call form_field(t("nodes.kind"), "kind") %}<select class="form-select" id="kind" name="kind"><option>awg</option><option>hop</option></select>{% endcall %}
+    <label class="form-check mb-3"><input class="form-check-input" id="enabled" type="checkbox" name="enabled" checked><span class="form-check-label">{{ t("nodes.enabled") }}</span></label>
+  {% call form_actions() %}<button type="submit" class="btn btn-primary">{{ t("nodes.create") }}</button>{% endcall %}
 </form>
 </div></div>
 {% endif %}
 {% if not create_only %}
-<div class="mb-3"><label class="form-label" for="node-search">Search nodes</label><input id="node-search" class="form-control" type="search" placeholder="Name, kind or status" data-table-search="#node-rows tr" aria-label="Search nodes"></div>
+<div class="mb-3"><label class="form-label" for="node-search">{{ t("nodes.search") }}</label><input id="node-search" class="form-control" type="search" placeholder="{{ t('nodes.search_placeholder') }}" data-table-search="#node-rows tr" aria-label="{{ t('nodes.search') }}"></div>
 <div hx-get="/ui/fragments/nodes" hx-trigger="every 10s" hx-swap="innerHTML">
 {% include "_nodes.html" %}
 </div>
-{% else %}<p><a class="btn" href="/ui/nodes">Cancel</a></p>{% endif %}
+{% else %}<p><a class="btn" href="/ui/nodes">{{ t("common.cancel") }}</a></p>{% endif %}
 {% endblock %}

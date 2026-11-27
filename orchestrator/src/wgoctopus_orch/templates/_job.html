@@ -2,8 +2,8 @@
 <div id="job"{% if job.state in active %} hx-get="/ui/fragments/jobs/{{ job.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
   {% call card() %}
     <p>{{ badge(job.state, state_class.get(job.state, 'bad')) }}
-      started {{ job.started_at|ts }}, finished {{ job.finished_at|ts }}
-      {% if job.state in active %}<button type="button" class="btn btn-danger btn-sm" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="#cancel-result" hx-swap="innerHTML">Cancel</button>{% endif %}
+      {{ t("job.timing", started=job.started_at|ts, finished=job.finished_at|ts) }}
+      {% if job.state in active %}<button type="button" class="btn btn-danger btn-sm" hx-post="/ui/jobs/{{ job.id }}/cancel" hx-target="#cancel-result" hx-swap="innerHTML">{{ t("common.cancel") }}</button>{% endif %}
     </p>
     <div id="cancel-result"></div>
     {% if job.error %}<div class="alert alert-danger" role="alert">{{ job.error }}</div>{% endif %}

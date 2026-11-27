@@ -38,7 +38,7 @@
 
 {% macro modal(id, title) %}
 <dialog id="{{ id }}" class="app-dialog" aria-labelledby="{{ id }}-title">
-  <div class="dialog-header"><h3 class="modal-title" id="{{ id }}-title">{{ title }}</h3><button type="button" class="btn-close" data-close-dialog aria-label="Close"></button></div>
+  <div class="dialog-header"><h3 class="modal-title" id="{{ id }}-title">{{ title }}</h3><button type="button" class="btn-close" data-close-dialog aria-label="{{ t('common.close') }}"></button></div>
   <div class="dialog-body">{% if caller is defined %}{{ caller() }}{% endif %}</div>
 </dialog>
 {% endmacro %}

@@ -2,6 +2,6 @@
 {% from "_components.html" import card %}
 {% block body %}
 <div class="row justify-content-center"><div class="col-md-8 col-lg-6">
-{% call card() %}<p>{{ message }}</p><p class="mb-0"><a href="/ui/">Back to dashboard</a></p>{% endcall %}
+{% call card() %}<p>{{ message }}</p><p class="mb-0"><a href="/ui/">{{ t("message.back") }}</a></p>{% endcall %}
 </div></div>
 {% endblock %}

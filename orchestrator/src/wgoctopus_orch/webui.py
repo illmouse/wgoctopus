@@ -31,14 +31,25 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
-NAV = [("/ui/", "Dashboard"), ("/ui/nodes", "Nodes"), ("/ui/instances", "Instances"), ("/ui/failover", "Failover"),
-       ("/ui/requests", "Requests"), ("/ui/bootstrap", "Bootstrap")]
 PEER_PAGE = 50
-FAILOVER_ERRORS = {
-    "not_pending": "This proposal was already decided.", "expired": "This proposal has expired.",
-    "stale": "The fleet changed since this proposal was made; wait for a new one.",
-    "no_candidate": "No healthy candidate node is available right now.", "not_found": "Proposal not found.",
-}
+def failover_error(error):
+    known = {
+        "not_pending": lambda: t("py.proposal_already_decided"), "expired": lambda: t("py.proposal_expired"),
+        "stale": lambda: t("py.proposal_stale"), "no_candidate": lambda: t("py.no_healthy_candidate"),
+        "not_found": lambda: t("py.proposal_not_found"),
+    }
+    return known[error]() if error in known else error
+
+
+def nav_items(operator):
+    items = [("/ui/", t("py.nav_dashboard")), ("/ui/nodes", t("py.nav_nodes")), ("/ui/instances", t("py.nav_instances")),
+             ("/ui/failover", t("py.nav_failover")), ("/ui/requests", t("py.nav_requests")),
+             ("/ui/bootstrap", t("py.nav_bootstrap"))]
+    if operator:
+        items += [("/ui/users", t("py.nav_users")), ("/ui/accounts", t("py.nav_accounts")), ("/ui/devices", t("py.nav_devices"))]
+    return items
+
+
 LIST_PAGE = 50
 FAILOVER_STATES = ("pending", "executed", "rejected", "expired", "cancelled", "failed")
 REQUEST_STATES = ("pending", "approved", "declined")
@@ -82,8 +93,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         return await call_next(request)
 
     def render(template, request, info=None, status_code=200, **ctx):
-        nav = NAV + ([("/ui/users", "Users"), ("/ui/accounts", "Accounts"), ("/ui/devices", "Devices")]
-                     if info and webauth.has_role(info.role, "operator") else [])
+        nav = nav_items(bool(info and webauth.has_role(info.role, "operator")))
         body = env.get_template(template).render(info=info, nav=nav, path=request.url.path, state_class=STATE_CLASS, **ctx)
         return HTMLResponse(body, status_code=status_code, headers=SECURITY_HEADERS)
 
@@ -121,7 +131,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                     service_users.set_role(s, user.username, "admin")
             return RedirectResponse("/ui/users", status_code=303, headers=SECURITY_HEADERS)
         except (ValueError, service_users.UserError, IntegrityError):
-            return message(request, info, 400, "Invalid user details.")
+            return message(request, info, 400, t("py.invalid_user_details"))
 
     @app.post("/ui/users/{username}/update", include_in_schema=False)
     async def users_update(username: str, request: Request):
@@ -133,7 +143,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             kick_ids = []
             with sessions.begin() as s:
                 user = service_users.get_user(s, username)
-                if not user: return message(request, info, 404, "User not found.")
+                if not user: return message(request, info, 404, t("py.user_not_found"))
                 if form.get("tg_id", ""):
                     user.tg_id = int(form["tg_id"])
                 new_username = service_users.normalize_username(form.get("username", user.username))
@@ -160,7 +170,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             if kick and kick_ids: kick(list(set(kick_ids)))
             return RedirectResponse("/ui/users", status_code=303, headers=SECURITY_HEADERS)
         except (ValueError, service_users.UserError, IntegrityError):
-            return message(request, info, 400, "Invalid user details.")
+            return message(request, info, 400, t("py.invalid_user_details"))
 
     @app.post("/ui/users/{username}/delete", include_in_schema=False)
     async def users_delete(username: str, request: Request):
@@ -177,7 +187,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             if kick and kick_ids: kick(list(set(kick_ids)))
             return RedirectResponse("/ui/users", status_code=303, headers=SECURITY_HEADERS)
         except service_users.UserError:
-            return message(request, info, 400, "User cannot be deleted.")
+            return message(request, info, 400, t("py.user_cannot_be_deleted"))
 
     @app.get("/ui/accounts", include_in_schema=False)
     def accounts_page(request: Request):
@@ -193,18 +203,18 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         form = {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
         if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")): return Response(status_code=403, headers=SECURITY_HEADERS)
         if account_id == info.account_id and (form.get("role") != "admin" or form.get("enabled") != "on"):
-            return message(request, info, 400, "You cannot disable or demote your own account.")
+            return message(request, info, 400, t("py.you_cannot_disable_or_demote"))
         try:
             with sessions.begin() as s:
                 account = s.get(WebAccount, account_id)
-                if not account: return message(request, info, 404, "Account not found.")
+                if not account: return message(request, info, 404, t("py.account_not_found"))
                 webauth.set_role(s, account, form.get("role", account.role))
                 webauth.set_enabled(s, account, form.get("enabled") == "on")
             if revoke_account and form.get("enabled") != "on":
                 revoke_account(account_id)
             return RedirectResponse("/ui/accounts", status_code=303, headers=SECURITY_HEADERS)
         except webauth.WebAuthError:
-            return message(request, info, 400, "Account change denied.")
+            return message(request, info, 400, t("py.account_change_denied"))
     @app.post("/ui/accounts/create", include_in_schema=False)
     async def account_create(request: Request):
         info, denied = check(request, "admin", page=False)
@@ -217,7 +227,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                                        form.get("role", "viewer"))
             return RedirectResponse("/ui/accounts", status_code=303, headers=SECURITY_HEADERS)
         except webauth.WebAuthError:
-            return message(request, info, 400, "Invalid account details.")
+            return message(request, info, 400, t("py.invalid_account_details"))
     @app.post("/ui/accounts/{account_id}/password", include_in_schema=False)
     async def account_password(account_id: int, request: Request):
         info, denied = check(request, "admin", page=False)
@@ -227,12 +237,12 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         try:
             with sessions.begin() as s:
                 account = s.get(WebAccount, account_id)
-                if not account: return message(request, info, 404, "Account not found.")
+                if not account: return message(request, info, 404, t("py.account_not_found"))
                 webauth.set_password(s, account, form.get("password", ""))
             if revoke_account: revoke_account(account_id)
             return RedirectResponse("/ui/accounts", status_code=303, headers=SECURITY_HEADERS)
         except webauth.WebAuthError:
-            return message(request, info, 400, "Password reset denied.")
+            return message(request, info, 400, t("py.password_reset_denied"))
 
     @app.post("/ui/accounts/{account_id}/delete", include_in_schema=False)
     async def account_delete(account_id: int, request: Request):
@@ -240,16 +250,16 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if denied: return denied
         form = {k: v[0] for k, v in parse_qs((await request.body()).decode()).items()}
         if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")): return Response(status_code=403, headers=SECURITY_HEADERS)
-        if account_id == info.account_id: return message(request, info, 400, "You cannot delete your own account.")
+        if account_id == info.account_id: return message(request, info, 400, t("py.you_cannot_delete_your_own"))
         try:
             with sessions.begin() as s:
                 account = s.get(WebAccount, account_id)
-                if not account: return message(request, info, 404, "Account not found.")
+                if not account: return message(request, info, 404, t("py.account_not_found"))
                 webauth.delete_account(s, account)
             if revoke_account: revoke_account(account_id)
             return RedirectResponse("/ui/accounts", status_code=303, headers=SECURITY_HEADERS)
         except webauth.WebAuthError:
-            return message(request, info, 400, "Account deletion denied.")
+            return message(request, info, 400, t("py.account_deletion_denied"))
 
     @app.get("/ui/devices", include_in_schema=False)
     def devices_page(request: Request):
@@ -285,7 +295,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             if kick: kick([instance_id])
             return RedirectResponse("/ui/devices", status_code=303, headers=SECURITY_HEADERS)
         except service_users.UserError:
-            return message(request, info, 400, "Invalid device owner.")
+            return message(request, info, 400, t("py.invalid_device_owner"))
     @app.post("/ui/devices/create", include_in_schema=False)
     async def device_create(request: Request):
         info, denied = check(request, "admin", page=False)
@@ -300,7 +310,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             if kick: kick([instance_id])
             return RedirectResponse("/ui/devices", status_code=303, headers=SECURITY_HEADERS)
         except (ValueError, service_users.UserError):
-            return message(request, info, 400, "Invalid device details.")
+            return message(request, info, 400, t("py.invalid_device_details"))
     @app.post("/ui/devices/{peer_id}/revoke", include_in_schema=False)
     async def device_revoke(peer_id: int, request: Request):
         info, denied = check(request, "admin", page=False)
@@ -309,7 +319,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not webauth.check_csrf(info, request.headers.get("x-csrf-token") or form.get("_csrf")): return Response(status_code=403, headers=SECURITY_HEADERS)
         with sessions.begin() as s:
             peer = s.get(Peer, peer_id)
-            if not peer or peer.owner == service.PROBE_OWNER: return message(request, info, 404, "Device not found.")
+            if not peer or peer.owner == service.PROBE_OWNER: return message(request, info, 404, t("py.device_not_found"))
             ops.remove_peer(s, peer_id)
         return RedirectResponse("/ui/devices", status_code=303, headers=SECURITY_HEADERS)
 
@@ -322,7 +332,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not info:
             return None, RedirectResponse("/login", status_code=303, headers=SECURITY_HEADERS) if page else Response(status_code=401, headers=SECURITY_HEADERS)
         if not webauth.has_role(info.role, min_role):
-            return None, message(request, info, 403, f"Your role ({info.role}) cannot open this page.") if page else Response(status_code=403, headers=SECURITY_HEADERS)
+            return None, message(request, info, 403, t("py.role_cannot_open_page", role=info.role)) if page else Response(status_code=403, headers=SECURITY_HEADERS)
         if write and not webauth.check_csrf(info, request.headers.get("x-csrf-token")):
             return None, Response(status_code=403, headers=SECURITY_HEADERS)
         return info, None
@@ -405,7 +415,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/nodes/{ident}"})
         except (ValueError, TypeError):
             return render("nodes.html", request, info, status_code=422, can_create=True,
-                          create_only=True, nodes=[], form_error="Check the node name, ports, and management settings.")
+                          create_only=True, nodes=[], form_error=t("py.check_the_node_name_ports"))
 
     @app.get("/ui/fragments/nodes", include_in_schema=False)
     def nodes_fragment(request: Request):
@@ -420,7 +430,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         with sessions() as s:
             node = node_view(s, node_id)
         if node is None:
-            return message(request, info, 404, "Node not found.")
+            return message(request, info, 404, t("py.node_not_found"))
         jobs = provision().list_jobs(node_id, 10)
         return render("node.html", request, info, node=node, jobs=jobs, can_provision=webauth.has_role(info.role, "admin"))
 
@@ -433,7 +443,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not valid_csrf(request, info, form):
             return Response(status_code=403, headers=SECURITY_HEADERS)
         if form.get("confirm") != "yes":
-            return message(request, info, 400, "Confirm node deletion first.")
+            return message(request, info, 400, t("py.confirm_node_deletion_first"))
         _, error = run(ops.delete_node, node_id)
         if error:
             return message(request, info, 409, error)
@@ -468,7 +478,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             return denied
         job = provision().job_view(job_id)
         if job is None:
-            return message(request, info, 404, "Job not found.")
+            return message(request, info, 404, t("py.job_not_found"))
         return render("job.html", request, info, job=job, active=ACTIVE_JOB)
 
     @app.get("/ui/fragments/jobs/{job_id}", include_in_schema=False)
@@ -490,7 +500,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if runner.job_view(job_id) is None:
             return Response(status_code=404, headers=SECURITY_HEADERS)
         if not runner.cancel(job_id):
-            return render("_error.html", request, info, text="Job is not running.")
+            return render("_error.html", request, info, text=t("py.job_is_not_running"))
         with sessions.begin() as s:
             service._event(s, "web.provision_cancel", info.username, {"job_id": job_id})
         return Response(status_code=204, headers=SECURITY_HEADERS)
@@ -568,7 +578,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         except (ValueError, TypeError, json.JSONDecodeError):
             return render("instances.html", request, info, status_code=422, instances=[],
                           node_names={}, can_create=True, new_only=True,
-                          form_error="Check the instance name, address, port, and AWG parameters.")
+                          form_error=t("py.check_the_instance_name_address"))
 
     @app.post("/ui/instances/generate", include_in_schema=False)
     async def instance_generate(request: Request):
@@ -594,7 +604,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             findings = _awg_findings(values, version, mtu)
             return JSONResponse({"obfuscation": values, "findings": findings}, headers=SECURITY_HEADERS)
         except (ValueError, TypeError, json.JSONDecodeError):
-            return JSONResponse({"findings": [{"severity": "error", "field": "", "message": "Invalid AWG generation options."}]},
+            return JSONResponse({"findings": [{"severity": "error", "field": "", "message": t("py.invalid_awg_generation_options")}]},
                                 status_code=422, headers=SECURITY_HEADERS)
 
     @app.post("/ui/instances/validate", include_in_schema=False)
@@ -608,13 +618,13 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             findings = _awg_findings(payload.obfuscation, payload.awg_version, payload.mtu)
             return JSONResponse({"findings": findings}, headers=SECURITY_HEADERS)
         except (ValueError, TypeError):
-            return JSONResponse({"findings": [{"severity": "error", "field": "", "message": "Invalid validation request."}]},
+            return JSONResponse({"findings": [{"severity": "error", "field": "", "message": t("py.invalid_validation_request")}]},
                                 status_code=422, headers=SECURITY_HEADERS)
 
     def _awg_findings(values, version, mtu):
         if not isinstance(values, dict) or any(not isinstance(k, str) or not isinstance(v, (str, int, bool))
                                                for k, v in values.items()):
-            return [{"severity": "error", "field": "obfuscation", "message": "Parameters must be scalar values."}]
+            return [{"severity": "error", "field": "obfuscation", "message": t("py.parameters_must_be_scalar")}]
         errors = awgparams.validate_obfuscation(values, mtu=mtu, version=version)
         errors += awgcps.validate_cps_chain({f"i{i}": values.get(f"i{i}", "") for i in range(1, 6)})
         collisions = [error for error in errors if "S collision" in error or "padded S sizes overlap" in error]
@@ -647,7 +657,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
 
             max_body = 262_144 + 16_384
             if int(request.headers.get("content-length", "0") or 0) > max_body:
-                return message(request, info, 413, "Configuration file exceeds 256 KiB.")
+                return message(request, info, 413, t("py.configuration_file_exceeds_256_kib"))
             received = 0
 
             async def bounded_stream():
@@ -661,13 +671,13 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             try:
                 form = await MultiPartParser(request.headers, bounded_stream(), max_files=1, max_fields=8).parse()
             except MultiPartException:
-                return message(request, info, 413, "Configuration file exceeds 256 KiB.")
+                return message(request, info, 413, t("py.configuration_file_exceeds_256_kib"))
             try:
                 return await _import_instance_form(request, info, form)
             finally:
                 await form.close()
         except (ValueError, TypeError, UnicodeDecodeError, IntegrityError):
-            return message(request, info, 422, "Invalid server configuration or conflicting instance.")
+            return message(request, info, 422, t("py.invalid_server_configuration_or_conflicting"))
 
     async def _import_instance_form(request, info, form):
         try:
@@ -676,7 +686,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             upload = form.get("file") or form.get("config")
             raw = await upload.read(262_145) if hasattr(upload, "read") else b""
             if len(raw) > 262_144:
-                return message(request, info, 413, "Configuration file exceeds 256 KiB.")
+                return message(request, info, 413, t("py.configuration_file_exceeds_256_kib"))
             from .importer import ImportFailure, parse_server_conf, validate_parsed
             parsed = parse_server_conf(raw.decode("utf-8"))
             if validate_parsed(parsed):
@@ -699,13 +709,13 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                                         allowed_ip=peer.allowed_ip, enabled=peer.enabled, owner=peer.owner, crypto=crypto)
                 ident = instance.id
             warnings = ", ".join(f"{w.code} ({w.count})" for w in parsed.warnings) or "none"
-            return message(request, info, 201, f'Imported instance <a href="/ui/instances/{ident}">{ident}</a>. Parser warnings: {warnings}.')
+            return message(request, info, 201, t("py.imported_instance", link=f'<a href="/ui/instances/{ident}">{ident}</a>', warnings=warnings))
         except (ValueError, TypeError, UnicodeDecodeError, IntegrityError):
-            return message(request, info, 422, "Invalid server configuration or conflicting instance.")
+            return message(request, info, 422, t("py.invalid_server_configuration_or_conflicting"))
 
     def update_obfuscation(instance_id, request, info, payload, *, regenerate=False):
         if payload.get("confirm_break_clients") not in (True, "on", "true", "1"):
-            return message(request, info, 409, "Confirmation is required: clients will lose connectivity.")
+            return message(request, info, 409, t("py.confirmation_is_required_clients_will"))
         try:
             with sessions.begin() as s:
                 instance = s.get(Instance, instance_id)
@@ -736,7 +746,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 kick(node_ids)
             return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/instances/{instance_id}"})
         except (ValueError, TypeError, json.JSONDecodeError):
-            return message(request, info, 422, "Invalid obfuscation parameters.")
+            return message(request, info, 422, t("py.invalid_obfuscation_parameters"))
 
     @app.post("/ui/instances/{instance_id}/obfuscation", include_in_schema=False)
     async def instance_obfuscation(instance_id: int, request: Request):
@@ -780,7 +790,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                     kick(target_ids)
             return Response(status_code=303, headers={**SECURITY_HEADERS, "Location": f"/ui/instances/{instance_id}"})
         except (ValueError, TypeError):
-            return render("_error.html", request, info, text="Invalid placement details.")
+            return render("_error.html", request, info, text=t("py.invalid_placement_details"))
 
     @app.get("/ui/instances/{instance_id}", include_in_schema=False)
     def instance_page(instance_id: int, request: Request, offset: int = 0):
@@ -791,7 +801,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         with sessions() as s:
             instance = instance_view(s, instance_id)
             if instance is None:
-                return message(request, info, 404, "Instance not found.")
+                return message(request, info, 404, t("py.instance_not_found"))
             peers, total = peers_page(s, instance_id, PEER_PAGE, offset)
             all_nodes = nodes(s)
             node_names = {n["id"]: n["name"] for n in all_nodes}
@@ -820,7 +830,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not valid_csrf(request, info, form):
             return Response(status_code=403, headers=SECURITY_HEADERS)
         if form.get("confirm") != "yes":
-            return message(request, info, 400, "Confirm instance deletion first.")
+            return message(request, info, 400, t("py.confirm_instance_deletion_first"))
         _, error = run(ops.delete_instance, instance_id)
         if error:
             return message(request, info, 409, error)
@@ -836,7 +846,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         name = (form.get("name") or [""])[0].strip()
         owner = (form.get("owner") or [""])[0].strip() or None
         if not name:
-            return render("_error.html", request, info, text="Peer name is required.")
+            return render("_error.html", request, info, text=t("py.peer_name_is_required"))
         result, error = run(ops.add_peer, instance_id, name, owner)
         if error:
             return render("_error.html", request, info, text=error)
@@ -933,7 +943,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         _, error = run(ops.failover, proposal_id, action, "web", info.username[:64])
         if not error:
             audit(f"web.failover_{action}", info, {"proposal_id": proposal_id})
-        return refreshed(request, info, FAILOVER_ERRORS.get(error, error))
+        return refreshed(request, info, failover_error(error))
 
     async def form_data(request):
         return {key: values[0] for key, values in parse_qs((await request.body()).decode("utf-8", "replace")).items()}
@@ -965,7 +975,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
             audit("web.failover_settings", info, values)
             return RedirectResponse("/ui/failover", status_code=303, headers=SECURITY_HEADERS)
         except (ValueError, TypeError):
-            return message(request, info, 400, "Invalid failover settings.")
+            return message(request, info, 400, t("py.invalid_failover_settings"))
 
     @app.post("/ui/failover/links", include_in_schema=False)
     async def failover_link_create(request: Request):
@@ -983,7 +993,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 kick([hop_id])
             return RedirectResponse("/ui/failover", status_code=303, headers=SECURITY_HEADERS)
         except (KeyError, ValueError, IntegrityError):
-            return message(request, info, 400, "Invalid or duplicate hop link.")
+            return message(request, info, 400, t("py.invalid_or_duplicate_hop_link"))
 
     @app.post("/ui/failover/links/{hop_id}/{instance_id}/delete", include_in_schema=False)
     async def failover_link_delete(hop_id: int, instance_id: int, request: Request):
@@ -994,10 +1004,10 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not valid_csrf(request, info, form):
             return Response(status_code=403, headers=SECURITY_HEADERS)
         if form.get("confirm") != "yes":
-            return message(request, info, 400, "Confirm the deletion first.")
+            return message(request, info, 400, t("py.confirm_the_deletion_first"))
         with sessions.begin() as s:
             if not service.delete_hop_link(s, hop_id, instance_id, crypto):
-                return message(request, info, 404, "Hop link not found.")
+                return message(request, info, 404, t("py.hop_link_not_found"))
         if kick:
             kick([hop_id])
         return RedirectResponse("/ui/failover", status_code=303, headers=SECURITY_HEADERS)
@@ -1020,7 +1030,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
                 kick([runner_id, *placed])
             return RedirectResponse("/ui/failover", status_code=303, headers=SECURITY_HEADERS)
         except (KeyError, ValueError, IntegrityError):
-            return message(request, info, 400, "Invalid probe configuration.")
+            return message(request, info, 400, t("py.invalid_probe_configuration"))
 
     @app.post("/ui/failover/probes/{probe_id}/delete", include_in_schema=False)
     async def failover_probe_delete(probe_id: int, request: Request):
@@ -1031,11 +1041,11 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not valid_csrf(request, info, form):
             return Response(status_code=403, headers=SECURITY_HEADERS)
         if form.get("confirm") != "yes":
-            return message(request, info, 400, "Confirm the deletion first.")
+            return message(request, info, 400, t("py.confirm_the_deletion_first"))
         with sessions.begin() as s:
             probe = s.get(Probe, probe_id)
             if not probe:
-                return message(request, info, 404, "Probe not found.")
+                return message(request, info, 404, t("py.probe_not_found"))
             runner_id, instance_id = probe.runner_node_id, probe.instance_id
             placed = s.scalars(select(Placement.node_id).where(Placement.instance_id == instance_id)).all()
             service.delete_probe(s, probe_id, crypto)
@@ -1052,11 +1062,11 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         if not valid_csrf(request, info, form):
             return Response(status_code=403, headers=SECURITY_HEADERS)
         if form.get("confirm") != "yes":
-            return message(request, info, 400, "Confirm the manual failover first.")
+            return message(request, info, 400, t("py.confirm_the_manual_failover_first"))
         try:
             instance_id, node_id = int(form["instance_id"]), int(form["node_id"])
         except (KeyError, ValueError):
-            return message(request, info, 400, "Select an instance and target node.")
+            return message(request, info, 400, t("py.select_an_instance_and_target"))
         _, error = run(ops.switch, instance_id, node_id)
         if error:
             return message(request, info, 409, error)
@@ -1096,7 +1106,7 @@ def mount(app, *, sessions, lookup, status, nodes, node_view, provision, instanc
         except ValueError:
             limit = -2
         if limit < -1:
-            return render("_error.html", request, info, text="Device limit must be a number, -1 for unlimited.")
+            return render("_error.html", request, info, text=t("py.device_limit_must_be_a"))
         _, error = run(ops.approve, request_id, limit)
         if not error:
             audit("web.request_approve", info, {"request_id": request_id, "default_limit": limit})

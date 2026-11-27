@@ -805,7 +805,7 @@ def test_requests_page_filters_and_roles(ui, monkeypatch):
     assert client.get("/ui/requests").status_code == 303
     login(client, "view")
     page = client.get("/ui/requests")
-    assert page.status_code == 200 and "Requests (2)" in page.text and "newbie" in page.text and "device limit 3 &rarr; 7" in page.text
+    assert page.status_code == 200 and "Requests (2)" in page.text and "newbie" in page.text and "device limit 3 → 7" in page.text
     assert "Approve" not in page.text and "approved" not in page.text.split("<tbody>")[1]
     assert "Requests (3)" in client.get("/ui/requests?status=all").text and "Requests (3)" in client.get("/ui/requests?status=bogus").text
     assert "Requests (1)" in client.get("/ui/requests?status=approved").text

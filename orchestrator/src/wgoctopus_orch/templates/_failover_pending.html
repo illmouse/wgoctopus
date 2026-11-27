@@ -1,19 +1,19 @@
 {% from "_components.html" import data_table, empty_state %}
 <div id="pending" hx-get="/ui/fragments/failover" hx-trigger="every 10s" hx-swap="outerHTML">
-{% call data_table(["#", "Instance", "Hop", "From", "To", "Reason", "Expires", ""]) %}
+{% call data_table(["#", t("failover.instance"), t("failover.hop"), "From", "To", t("failover.reason"), t("failover.expires"), ""]) %}
   {% for p in proposals %}
   <tr>
-    <td data-label="#">{{ p.id }}</td><td data-label="Instance">{{ p.instance }}</td><td data-label="Hop">{{ p.hop }}</td><td data-label="From">{{ p.from_node }}</td><td data-label="To">{{ p.to_node }}</td>
-    <td data-label="Reason">{{ p.reason }}</td><td data-label="Expires">{{ p.expires_at|ts }}</td>
+    <td data-label="#">{{ p.id }}</td><td data-label="{{ t("failover.instance") }}">{{ p.instance }}</td><td data-label="{{ t("failover.hop") }}">{{ p.hop }}</td><td data-label="From">{{ p.from_node }}</td><td data-label="To">{{ p.to_node }}</td>
+    <td data-label="{{ t("failover.reason") }}">{{ p.reason }}</td><td data-label="{{ t("failover.expires") }}">{{ p.expires_at|ts }}</td>
     <td data-label="">
       {% if can_operate %}
       <div class="btn-list">
-      <button type="button" class="btn btn-primary btn-sm" hx-post="/ui/failovers/{{ p.id }}/confirm" hx-target="#failover-result" hx-confirm="Switch {{ p.instance }} from {{ p.from_node }} to {{ p.to_node }}?">Confirm</button>
-      <button type="button" class="btn btn-outline-danger btn-sm" hx-post="/ui/failovers/{{ p.id }}/reject" hx-target="#failover-result" hx-confirm="Reject proposal {{ p.id }}?">Reject</button>
+      <button type="button" class="btn btn-primary btn-sm" hx-post="/ui/failovers/{{ p.id }}/confirm" hx-target="#failover-result" hx-confirm="{{ t('failover.confirm_switch', instance=p.instance, to=p.to_node, **{'from': p.from_node}) }}">{{ t("failover.confirm") }}</button>
+      <button type="button" class="btn btn-outline-danger btn-sm" hx-post="/ui/failovers/{{ p.id }}/reject" hx-target="#failover-result" hx-confirm="{{ t('failover.reject_proposal', id=p.id) }}">{{ t("failover.reject") }}</button>
       </div>
       {% endif %}
     </td>
   </tr>
-  {% else %}<tr><td data-label="#" colspan="8" class="text-secondary">{{ empty_state("No pending proposals") }}</td></tr>{% endfor %}
+  {% else %}<tr><td data-label="#" colspan="8" class="text-secondary">{{ empty_state(t("failover.no_pending_proposals")) }}</td></tr>{% endfor %}
 {% endcall %}
 </div>

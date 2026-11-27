@@ -1,20 +1,20 @@
 {% from "_components.html" import data_table, empty_state %}
 <div class="row row-cards mb-3">
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Instances</div><div class="h1 mb-0">{{ summary.instances }}</div><a class="text-secondary" href="/ui/instances">Manage instances →</a></div></div></div>
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Peers</div><div class="h1 mb-0">{{ summary.peers }}</div></div></div></div>
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Nodes offline</div><div class="h1 mb-0">{{ summary.nodes_unhealthy }}</div><a class="text-secondary" href="/ui/nodes">Review nodes →</a></div></div></div>
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Nodes online</div><div class="h1 mb-0">{{ summary.nodes_by_state.get('IN_SYNC', 0) }}</div></div></div></div>
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Pending proposals</div><div class="h1 mb-0">{{ summary.pending_proposals }}</div><a class="text-secondary" href="/ui/failover">Review failover →</a></div></div></div>
-  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">Pending requests</div><div class="h1 mb-0">{{ summary.pending_requests }}</div><a class="text-secondary" href="/ui/requests">Review requests →</a></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.instances") }}</div><div class="h1 mb-0">{{ summary.instances }}</div><a class="text-secondary" href="/ui/instances">{{ t("dashboard.manage_instances_link") }}</a></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.peers") }}</div><div class="h1 mb-0">{{ summary.peers }}</div></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.nodes_offline") }}</div><div class="h1 mb-0">{{ summary.nodes_unhealthy }}</div><a class="text-secondary" href="/ui/nodes">{{ t("dashboard.review_nodes") }}</a></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.nodes_online") }}</div><div class="h1 mb-0">{{ summary.nodes_by_state.get('IN_SYNC', 0) }}</div></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.pending_proposals") }}</div><div class="h1 mb-0">{{ summary.pending_proposals }}</div><a class="text-secondary" href="/ui/failover">{{ t("dashboard.review_failover") }}</a></div></div></div>
+  <div class="col-6 col-md-4 col-xl-2"><div class="card card-sm"><div class="card-body"><div class="subheader">{{ t("dashboard.pending_requests") }}</div><div class="h1 mb-0">{{ summary.pending_requests }}</div><a class="text-secondary" href="/ui/requests">{{ t("dashboard.review_requests") }}</a></div></div></div>
 </div>
-<h2 class="page-subtitle">Nodes by state</h2>
+<h2 class="page-subtitle">{{ t("dashboard.nodes_by_state") }}</h2>
 <div class="row row-cards mb-3">
 {% for name, count in summary.nodes_by_state.items() %}
   <div class="col-12 col-sm-6 col-md-4 col-xl-3"><div class="card card-sm"><div class="card-body"><div class="subheader text-break">{{ name }}</div><div class="h1 mb-0">{{ count }}</div></div></div></div>
 {% endfor %}
 </div>
-<h2 class="page-subtitle">Recent events</h2>
-{% call data_table(["Time", "Event", "Subject"]) %}
-{% for e in events %}<tr><td data-label="Time"><time data-relative-time="{{ e.ts.isoformat() }}" title="{{ e.ts|ts }}">{{ e.ts|ts }}</time></td><td data-label="Event">{{ e.kind }}</td><td data-label="Subject">{{ e.subject }}</td></tr>
-{% else %}<tr><td data-label="Events">{{ empty_state("No events yet") }}</td></tr>{% endfor %}
+<h2 class="page-subtitle">{{ t("dashboard.recent_events") }}</h2>
+{% call data_table([t("dashboard.time"), t("dashboard.event"), t("dashboard.subject")]) %}
+{% for e in events %}<tr><td data-label="{{ t("dashboard.time") }}"><time data-relative-time="{{ e.ts.isoformat() }}" title="{{ e.ts|ts }}">{{ e.ts|ts }}</time></td><td data-label="{{ t("dashboard.event") }}">{{ e.kind }}</td><td data-label="{{ t("dashboard.subject") }}">{{ e.subject }}</td></tr>
+{% else %}<tr><td data-label="{{ t("dashboard.events") }}">{{ empty_state(t("dashboard.no_events")) }}</td></tr>{% endfor %}
 {% endcall %}

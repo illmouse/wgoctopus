@@ -1,16 +1,16 @@
 {% from "_components.html" import data_table %}
-<h2 class="mb-3">{{ "Dry run" if dry_run else "Applied" }}</h2>
+<h2 class="mb-3">{{ t("bootstrap.dry_run") if dry_run else t("bootstrap.applied") }}</h2>
 {% for section in ("created", "updated", "unchanged", "pruned") %}
 <h3 class="mb-3">{{ section }}</h3>
 {% if report[section] %}
-{% call data_table(["Kind", "Names"]) %}
+{% call data_table([t("bootstrap.kind"), t("bootstrap.names")]) %}
   {% for kind, names in report[section].items() %}
-  <tr><td data-label="Kind">{{ kind }}</td><td data-label="Names">{{ names|join(", ") }}</td></tr>
+  <tr><td data-label="{{ t('bootstrap.kind') }}">{{ kind }}</td><td data-label="{{ t('bootstrap.names') }}">{{ names|join(", ") }}</td></tr>
   {% endfor %}
 {% endcall %}
-{% else %}<p class="text-secondary">{{ "nothing" }}</p>{% endif %}
+{% else %}<p class="text-secondary">{{ t("bootstrap.nothing") }}</p>{% endif %}
 {% endfor %}
 {% if report.warnings %}
-<h3 class="mb-3">warnings</h3>
+<h3 class="mb-3">{{ t("bootstrap.warnings") }}</h3>
 <ul>{% for w in report.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
 {% endif %}

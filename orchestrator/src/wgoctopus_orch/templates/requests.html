@@ -1,38 +1,38 @@
 {% extends "base.html" %}
 {% from "_components.html" import page_header, data_table, form_field, form_actions, empty_state, badge %}
-{% block title %}Requests - wgoctopus{% endblock %}
+{% block title %}{{ t("requests.page_title") }}{% endblock %}
 {% block body %}
-{% call page_header("Requests (" ~ total ~ ")", "Access and device limit approvals") %}{{ badge(status|title, 'warn') }}{% endcall %}
+{% call page_header(t("requests.header", total=total), t("requests.subtitle")) %}{{ badge(status|title, 'warn') }}{% endcall %}
 <div class="btn-list mb-3">
-  <a class="btn btn-sm{% if status == 'all' %} btn-primary{% endif %}" href="/ui/requests?status=all">all</a>
+  <a class="btn btn-sm{% if status == 'all' %} btn-primary{% endif %}" href="/ui/requests?status=all">{{ t("requests.all") }}</a>
   {% for st in states %}<a class="btn btn-sm{% if st == status %} btn-primary{% endif %}" href="/ui/requests?status={{ st }}">{{ st }}</a>{% endfor %}
 </div>
 <div id="request-result"></div>
-{% call form_field("Search requests", "search") %}<input class="form-control" id="search" type="search" placeholder="Requester, type or status" data-table-search="#requests-table tbody tr" aria-label="Search requests">{% endcall %}
+{% call form_field(t("requests.search"), "search") %}<input class="form-control" id="search" type="search" placeholder="{{ t("requests.search_placeholder") }}" data-table-search="#requests-table tbody tr" aria-label="{{ t("requests.search") }}">{% endcall %}
 <div id="requests-table">
-{% call data_table(["#", "Type", "Requester", "Request", "Status", "Requested", "Decided", ""]) %}
+{% call data_table(["#", t("requests.type"), t("requests.requester"), t("requests.request"), t("requests.status"), t("requests.requested"), t("requests.decided"), ""]) %}
   {% for r in requests %}
   <tr>
-    <td data-label="#">{{ r.id }}</td><td data-label="Type">{{ r.type }}</td>
-    <td data-label="Requester">{{ r.username or "-" }} <span class="text-secondary">(tg {{ r.tg_id }}{% if r.first_name or r.last_name %}, {{ r.first_name or "" }} {{ r.last_name or "" }}{% endif %})</span></td>
-    <td data-label="Request">{% if r.type == "limit" %}device limit {{ r.previous_limit }} &rarr; {{ r.requested_limit }}{% else %}access{% endif %}</td>
-    <td data-label="Status">{{ badge(r.status, state_class.get(r.status, 'warn') if r.status != 'pending' else 'warn') }}</td>
-    <td data-label="Requested"><time data-relative-time="{{ r.requested_at.isoformat() }}" title="{{ r.requested_at|ts }}">{{ r.requested_at|ts }}</time></td><td data-label="Decided">{{ r.decided_at|ts }}</td>
+    <td data-label="#">{{ r.id }}</td><td data-label="{{ t("requests.type") }}">{{ r.type }}</td>
+    <td data-label="{{ t("requests.requester") }}">{{ r.username or "-" }} <span class="text-secondary">(tg {{ r.tg_id }}{% if r.first_name or r.last_name %}, {{ r.first_name or "" }} {{ r.last_name or "" }}{% endif %})</span></td>
+    <td data-label="{{ t("requests.request") }}">{% if r.type == "limit" %}{{ t("requests.limit_change", previous=r.previous_limit, requested=r.requested_limit) }}{% else %}{{ t("requests.access") }}{% endif %}</td>
+    <td data-label="{{ t("requests.status") }}">{{ badge(r.status, state_class.get(r.status, 'warn') if r.status != 'pending' else 'warn') }}</td>
+    <td data-label="{{ t("requests.requested") }}"><time data-relative-time="{{ r.requested_at.isoformat() }}" title="{{ r.requested_at|ts }}">{{ r.requested_at|ts }}</time></td><td data-label="{{ t("requests.decided") }}">{{ r.decided_at|ts }}</td>
     <td data-label="">
       {% if can_decide and r.status == "pending" %}
-      <form hx-post="/ui/requests/{{ r.id }}/approve" hx-target="#request-result" hx-confirm="Approve request {{ r.id }}?">
-        {% if r.type == "access" %}{% call form_field("Device limit (-1 = unlimited)", "default_limit-" ~ r.id) %}<input class="form-control" id="default_limit-{{ r.id }}" type="number" name="default_limit" value="3" min="-1" title="Device limit (-1 = unlimited)">{% endcall %}{% endif %}
-        {% call form_actions() %}<button type="submit" class="btn btn-primary btn-sm">Approve</button>
-        <button type="button" class="btn btn-outline-danger btn-sm" hx-post="/ui/requests/{{ r.id }}/decline" hx-target="#request-result" hx-confirm="Decline request {{ r.id }}?">Decline</button>{% endcall %}
+      <form hx-post="/ui/requests/{{ r.id }}/approve" hx-target="#request-result" hx-confirm="{{ t('requests.approve_confirm', id=r.id) }}">
+        {% if r.type == "access" %}{% call form_field(t("requests.device_limit"), "default_limit-" ~ r.id) %}<input class="form-control" id="default_limit-{{ r.id }}" type="number" name="default_limit" value="3" min="-1" title="{{ t("requests.device_limit") }}">{% endcall %}{% endif %}
+        {% call form_actions() %}<button type="submit" class="btn btn-primary btn-sm">{{ t("requests.approve") }}</button>
+        <button type="button" class="btn btn-outline-danger btn-sm" hx-post="/ui/requests/{{ r.id }}/decline" hx-target="#request-result" hx-confirm="{{ t('requests.decline_confirm', id=r.id) }}">{{ t("requests.decline") }}</button>{% endcall %}
       </form>
       {% endif %}
     </td>
   </tr>
-  {% else %}<tr><td data-label="#" colspan="8">{{ empty_state("No requests") }}<p>New requests will appear here.</p></td></tr>{% endfor %}
+  {% else %}<tr><td data-label="#" colspan="8">{{ empty_state(t("requests.empty")) }}<p>{{ t("requests.empty_hint") }}</p></td></tr>{% endfor %}
 {% endcall %}
 </div>
 <p class="d-flex gap-2 mt-3">
-  {% if offset > 0 %}<a class="btn btn-sm" href="/ui/requests?status={{ status }}&amp;offset={{ [offset - page_size, 0]|max }}">&larr; Newer</a>{% endif %}
-  {% if offset + page_size < total %}<a class="btn btn-sm" href="/ui/requests?status={{ status }}&amp;offset={{ offset + page_size }}">Older &rarr;</a>{% endif %}
+  {% if offset > 0 %}<a class="btn btn-sm" href="/ui/requests?status={{ status }}&amp;offset={{ [offset - page_size, 0]|max }}">{{ t("requests.newer") }}</a>{% endif %}
+  {% if offset + page_size < total %}<a class="btn btn-sm" href="/ui/requests?status={{ status }}&amp;offset={{ offset + page_size }}">{{ t("requests.older") }}</a>{% endif %}
 </p>
 {% endblock %}
