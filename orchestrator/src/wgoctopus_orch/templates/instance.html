@@ -34,7 +34,7 @@
     <div class="dialog-actions"><button class="btn btn-primary" type="submit">Create peer</button><button type="button" class="btn" data-close-dialog>Cancel</button></div>
   </form>{% endcall %}{% endif %}
   <div id="peer-add-result" aria-live="polite"></div>
-  <div class="mb-3"><label class="form-label">Search peers<input class="form-control" type="search" placeholder="Name, owner or address" data-table-search="#peer-rows tr" aria-label="Search peers"></label></div>
+  <div class="mb-3">{% call form_field("Search peers", "peer-search") %}<input class="form-control" id="peer-search" type="search" placeholder="Name, owner or address" data-table-search="#peer-rows tr" aria-label="Search peers">{% endcall %}</div>
   {% call data_table(["Name", "Owner", "Address", "Status", "Created", "Actions"], body_id="peer-rows") %}
   {% for p in peers %}<tr><td data-label="Name">{{ p.name }}</td><td data-label="Owner">{{ p.owner or "—" }}</td><td data-label="Address"><code>{{ p.allowed_ip }}</code></td><td data-label="Status">{{ badge("Enabled" if p.enabled else "Disabled", 'ok' if p.enabled else 'muted') }}</td>
     <td data-label="Created"><time data-relative-time="{{ p.created_at.isoformat() }}" title="{{ p.created_at|ts }}">{{ p.created_at|ts }}</time></td><td data-label="Actions"><div class="btn-list">

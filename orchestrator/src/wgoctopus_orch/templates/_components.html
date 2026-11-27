@@ -22,7 +22,7 @@
 {% endmacro %}
 
 {% macro form_field(label, name, hint=none, error=none) %}
-<div class="mb-3 form-field">
+<div class="form-field">
   <label class="form-label" for="{{ name }}">{{ label }}</label>
   {% if caller is defined %}{{ caller() }}{% endif %}
   {% if hint %}<div class="form-hint">{{ hint }}</div>{% endif %}

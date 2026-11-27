@@ -54,3 +54,7 @@ main>:empty{display:none}
 .create-layout{display:flex;flex-direction:column;gap:var(--tblr-spacer-4)}
 main>p.mt-3{margin-top:0!important}
 main>.mb-3>.form-field:last-child,.card-body>.form-field:last-child{margin-bottom:0}
+
+/* inside a Bootstrap grid the row gutter already spaces fields */
+.form-field { margin-bottom: 1rem; }
+.row > [class*="col"] > .form-field { margin-bottom: 0; }

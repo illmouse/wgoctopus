@@ -15,7 +15,7 @@
 <div class="{{ cols }}"><label class="form-label d-flex flex-wrap align-items-center gap-2" for="g-{{ name }}"><span>{{ label }}</span>{{ scope(kind) }}</label>{{ caller() }}<div class="form-hint">{{ hint }}</div></div>
 {% endmacro %}
 {% macro gswitch(name, label, kind, since, hint, checked=false) %}
-<div class="col-12 col-lg-6"><label class="form-check mb-1"><input class="form-check-input" name="{{ name }}" type="checkbox" {% if checked %}checked{% endif %}><span class="form-check-label fw-medium">{{ label }}</span> {{ scope(kind) }} {{ badge(since, "muted") }}</label><div class="form-hint ps-4">{{ hint }}</div></div>
+<div class="col-12 col-lg-6"><label class="form-check mb-1"><input class="form-check-input" name="{{ name }}" type="checkbox" {% if checked %}checked{% endif %}><span class="form-check-label fw-medium">{{ label }}</span></label><div class="ps-4 d-flex flex-wrap gap-1 mb-1">{{ scope(kind) }} {{ badge(since, "muted") }}</div><div class="form-hint ps-4">{{ hint }}</div></div>
 {% endmacro %}
 <section id="generate" class="card"><div class="card-header"><h2 class="card-title">Generate</h2></div><div class="card-body">
   <div class="alert alert-info" role="note">
@@ -98,7 +98,7 @@
   </form>
   <div class="btn-list mt-4"><button class="btn btn-primary" type="submit" form="awg-generator">Generate parameters</button><button class="btn" id="awg-validate" type="button">Validate parameters</button></div>
   <p class="mt-3">H ranges: <span id="awg-h-status" aria-live="polite">Not generated</span></p>
-  <div class="mb-3"><label class="form-label">Generated parameters (editable JSON)<textarea class="form-control" id="awg-obfuscation" rows="12" spellcheck="false">{}</textarea></label><div class="form-hint">You can edit the JSON by hand and press Validate to check it. Created instances use whatever is in this box.</div></div>
+  {% call form_field("Generated parameters (editable JSON)", "awg-obfuscation", "You can edit the JSON by hand and press Validate to check it. Created instances use whatever is in this box.") %}<textarea class="form-control" id="awg-obfuscation" rows="12" spellcheck="false">{}</textarea>{% endcall %}
   <ul id="awg-findings" aria-live="polite"></ul>
 </div></section>
 <section class="card"><div class="card-header"><h2 class="card-title">Instance details</h2></div><div class="card-body">
@@ -107,10 +107,10 @@
     <input type="hidden" name="obfuscation_json" value="">
     <input type="hidden" name="awg_version" value="3.1">
     <input type="hidden" name="mtu" value="1280">
-    <div class="col-12 col-md-6"><label class="form-label">Name <input class="form-control" name="name" required pattern="[A-Za-z0-9_=+.-]{1,15}"></label></div>
-    <div class="col-12 col-md-6"><label class="form-label">Address <input class="form-control" name="address" required placeholder="10.0.0.1/24"></label></div>
-    <div class="col-12 col-md-6"><label class="form-label">Listen port <input class="form-control" name="listen_port" type="number" min="1" max="65535" required></label></div>
-    <div class="col-12 col-md-6"><label class="form-label">Endpoint host <input class="form-control" name="endpoint_host"></label></div>
+    <div class="col-12 col-md-6">{% call form_field("Name", "ci-name") %}<input class="form-control" id="ci-name" name="name" required pattern="[A-Za-z0-9_=+.-]{1,15}">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Address", "ci-address") %}<input class="form-control" id="ci-address" name="address" required placeholder="10.0.0.1/24">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Listen port", "ci-port") %}<input class="form-control" id="ci-port" name="listen_port" type="number" min="1" max="65535" required>{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Endpoint host", "ci-endpoint") %}<input class="form-control" id="ci-endpoint" name="endpoint_host">{% endcall %}</div>
     <div class="col-12">{% call form_actions() %}<button class="btn btn-primary" type="submit">Create instance</button>{% endcall %}</div>
   </form>
 </div></section>
@@ -118,9 +118,9 @@
 <section id="import-panel" class="card" role="tabpanel" data-awg-panel="import" hidden><div class="card-header"><h2 class="card-title">Import file</h2></div><div class="card-body">
   <form method="post" action="/ui/instances/import" enctype="multipart/form-data" class="row g-3">
     <input type="hidden" name="_csrf" value="{{ info.csrf }}">
-    <div class="col-12 col-md-6"><label class="form-label">Name <input class="form-control" name="name" required maxlength="15"></label></div>
-    <div class="col-12 col-md-6"><label class="form-label">Endpoint host override <input class="form-control" name="endpoint_host"></label></div>
-    <div class="col-12"><label class="form-label">Server .conf (max 256 KiB) <input class="form-control" name="file" type="file" accept=".conf,text/plain" required></label></div>
+    <div class="col-12 col-md-6">{% call form_field("Name", "im-name") %}<input class="form-control" id="im-name" name="name" required maxlength="15">{% endcall %}</div>
+    <div class="col-12 col-md-6">{% call form_field("Endpoint host override", "im-endpoint") %}<input class="form-control" id="im-endpoint" name="endpoint_host">{% endcall %}</div>
+    <div class="col-12">{% call form_field("Server .conf (max 256 KiB)", "im-file") %}<input class="form-control" id="im-file" name="file" type="file" accept=".conf,text/plain" required>{% endcall %}</div>
     <div class="col-12">{% call form_actions() %}<button class="btn btn-primary" type="submit">Import configuration</button>{% endcall %}</div>
   </form>
 </div></section>
