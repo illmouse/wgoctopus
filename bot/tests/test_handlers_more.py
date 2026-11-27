@@ -139,3 +139,45 @@ async def test_callback_close_deletes_message():
     query.delete_message = AsyncMock()
     await callback(upd, ctx())
     query.delete_message.assert_awaited_once()
+
+
+def _table_screen():
+    from wgoctopus_bot.screens import Button, Screen
+
+    return Screen("<b>Title</b>\nrow", [[Button("Back", "menu")]], (["ID"], [["#1"]]))
+
+
+@pytest.mark.asyncio
+async def test_render_table_uses_rich_message_and_falls_back():
+    from wgoctopus_bot.router import ShowScreen
+
+    upd, msg, _ = update()
+    msg.chat_id = 5
+    context = ctx()
+    context.bot._post = AsyncMock()
+    await render(ShowScreen(_table_screen(), False), upd, context)
+    endpoint = context.bot._post.await_args.args[0]
+    assert endpoint == "sendRichMessage"
+    assert '"table"' in context.bot._post.await_args.kwargs["data"]["rich_message"]
+    msg.reply_text.assert_not_awaited()
+
+    from telegram.error import BadRequest
+
+    context.bot._post = AsyncMock(side_effect=BadRequest("unsupported"))
+    await render(ShowScreen(_table_screen(), False), upd, context)
+    msg.reply_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_render_edit_of_rich_message_replaces_it_on_bad_request():
+    from telegram.error import BadRequest
+
+    from wgoctopus_bot.router import ShowScreen
+    from wgoctopus_bot.screens import Button, Screen
+
+    upd, _, query = update(callback_data="menu")
+    query.message = SimpleNamespace(chat_id=5, message_id=9, reply_text=AsyncMock(), delete=AsyncMock())
+    query.edit_message_text = AsyncMock(side_effect=BadRequest("There is no text in the message to edit"))
+    await render(ShowScreen(Screen("hi", [[Button("x", "menu")]]), True), upd, ctx())
+    query.message.reply_text.assert_awaited_once()
+    query.message.delete.assert_awaited_once()

@@ -33,7 +33,8 @@ async def test_user_list_filters_pages_admins_and_card():
     assert isinstance(await handle_callback("users:all:0", ADMIN, api, CFG), ShowScreen)
     card = await handle_callback("user:alice", ADMIN, api, CFG)
     assert isinstance(card, ShowScreen)
-    assert {"udev:alice", "ulimit:alice", "userdis:alice", "userena:alice", "urole:alice:admin", "udel:alice"} <= set(buttons(card.screen))
+    assert {"udev:alice", "ulimit:alice", "userdis:alice", "urole:alice:admin", "udel:alice"} <= set(buttons(card.screen))
+    assert "userena:alice" not in buttons(card.screen)
     for cb in ("menu:users", "users:all:0", "user:alice", "udev:alice", "ulimit:alice", "userdis:alice", "userena:alice", "urole:alice:admin", "udel:alice", "udelok:alice"):
         denied = await handle_callback(cb, USER, api, CFG)
         assert isinstance(denied, Toast) and denied.alert and denied.text == t("en", "forbidden")
@@ -68,7 +69,7 @@ async def test_user_status_role_and_delete_flows():
     api.admins = []
     assert (await handle_callback("urole:root:user", ADMIN, api, CFG)).text == t("en", "user_admin_protected")
     confirmation = await handle_callback("udel:alice", ADMIN, api, CFG)
-    assert isinstance(confirmation, ShowScreen) and "udel:alice" in buttons(confirmation.screen)
+    assert isinstance(confirmation, ShowScreen) and "udelok:alice" in buttons(confirmation.screen)
     await handle_callback("udelok:alice", ADMIN, api, CFG)
     assert "alice" not in api.users
 

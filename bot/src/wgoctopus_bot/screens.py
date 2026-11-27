@@ -22,12 +22,24 @@ class Screen:
 
     text: str
     buttons: list[list[Button]]
+    table: tuple[list[str], list[list[str]]] | None = None
 
 
 def _button(label: str, data: str) -> Button:
     if len(data.encode("utf-8")) > 64:
         raise ValueError("callback_data exceeds Telegram's 64-byte limit")
     return Button(label, data)
+
+
+def _pager(base: str, page: int, pages: int) -> list[Button]:
+    row = []
+    if page > 0:
+        row.append(_button("◀️", f"{base}:{page - 1}"))
+    if pages > 1:
+        row.append(_button(f"{page + 1}/{pages}", "noop"))
+    if page < pages - 1:
+        row.append(_button("▶️", f"{base}:{page + 1}"))
+    return row if pages > 1 else []
 
 
 def format_bytes(value: float | None) -> str:
@@ -69,19 +81,39 @@ def main_menu(lang: str, role: str) -> Screen:
     return Screen(t(lang, "menu"), rows)
 
 
+REQUEST_ICONS = {"pending": "⏳", "approved": "✅", "declined": "❌"}
+
+
 def requests_screen(lang: str, requests: list[dict[str, Any]], tab: str, page: int, total: int, pending: int) -> Screen:
+    """Build the request history (table) or the pending list (action rows)."""
     pages = max(1, ((pending if tab == "pending" else total) + 9) // 10)
     page = max(0, min(page, pages - 1))
     rows = [[_button(t(lang, "requests_all", count=total), "reqs:all:0"), _button(t(lang, "requests_pending", count=pending), "reqs:pending:0")]]
     lines = []
+    cells = []
     for request in requests:
         status = request.get("status", "pending")
-        lines.append(t(lang, "request_row", id=request["id"], icon="⏳" if status == "pending" else "✅", status=t(lang, "request_status_" + status), kind=t(lang, "request_" + request.get("type", "access")), username=request.get("username") or "—", limit=request.get("requested_limit", "—"), date=str(request.get("created_at", "—"))[:10], admin=request.get("admin_username") or "—"))
-        if status == "pending":
-            rows.append([_button(t(lang, "approve"), f"req:a:{request['id']}"), _button(t(lang, "decline_button"), f"req:d:{request['id']}")])
-    if page or page < pages - 1: rows.append([_button("‹", f"reqs:{tab}:{max(0,page-1)}"), _button("›", f"reqs:{tab}:{page+1}")])
-    rows.append([_button(t(lang, "back"), "menu")])
-    return Screen("\n".join(lines) or t(lang, "none_requests"), rows)
+        kind = request.get("type", "access")
+        icon = REQUEST_ICONS.get(status, "⏳")
+        username = escape(str(request.get("username") or "—"), quote=False)
+        limit = request.get("requested_limit", "—")
+        date = str(request.get("created_at", "—"))[:10]
+        admin = escape(str(request.get("admin_username") or "—"), quote=False)
+        lines.append(t(lang, "request_row", id=request["id"], icon=icon, status=t(lang, "request_status_" + status), kind=t(lang, "request_" + kind), username=username, limit=limit, date=date, admin=admin))
+        cells.append([f"#{request['id']}", f"@{username}", ("🔑 " if kind == "access" else "📈 ") + t(lang, "request_" + kind), str(limit), f"{icon} {t(lang, 'request_status_' + status)}", admin, date])
+        if tab == "pending" and status == "pending":
+            rows.append([_button(f"#{request['id']} {'🔑' if kind == 'access' else '📈'} @{username} → {limit}", "noop"), _button(t(lang, "approve"), f"req:a:{request['id']}"), _button(t(lang, "decline_button"), f"req:d:{request['id']}")])
+    pager = _pager(f"reqs:{tab}", page, pages)
+    if pager:
+        rows.append(pager)
+    rows.append([_button(t(lang, "back"), "menu"), _button(t(lang, "close"), "close")])
+    if not requests:
+        return Screen(t(lang, "none_requests"), rows)
+    title = t(lang, "requests_title_pending" if tab == "pending" else "requests_title_all", pending=pending)
+    if tab == "pending":
+        return Screen(title, rows)
+    headers = [t(lang, key) for key in ("th_id", "th_user", "th_request", "th_limit", "th_status", "th_by", "th_date")]
+    return Screen(title + "\n" + "\n".join(lines), rows, (headers, cells))
 
 
 def devices_screen(
@@ -106,12 +138,14 @@ def devices_screen(
     for device in selected[page * 8 : page * 8 + 8]:
         name = escape(str(device.get("name", "")), quote=False)
         age = handshake_age(device.get("latest_handshake_at"))
-        label = f"{name} {age}"
+        dot = "🔴" if not device.get("enabled") else "🟢" if device.get("active") else "⚪"
+        label = f"{dot} {name} · {age}"
         if show_owner:
             label += f" · {escape(str(device.get('owner', '')), quote=False)}"
         rows.append([_button(label, f"pinfo:{device['id']}")])
-    if page > 0 or page < pages - 1:
-        rows.append([_button("‹", f"dev:{flt}:{page - 1}"), _button("›", f"dev:{flt}:{page + 1}")])
+    pager = _pager(f"dev:{flt}", page, pages)
+    if pager:
+        rows.append(pager)
     rows.append([_button(t(lang, "close"), "close")])
     shown_limit = "∞" if limit == -1 else str(limit)
     text = t(lang, "limit_line", used=used, limit=shown_limit)
@@ -141,13 +175,16 @@ def device_card(lang: str, device: dict[str, Any], can_manage_state: bool = Fals
     rows = [[_button(t(lang, "download"), f"cfg:{ident}")], [_button(t(lang, "rename"), f"ren:{ident}")]]
     if can_manage_state:
         action = "toggle_off" if device.get("enabled") else "toggle_on"
-        rows.append([_button(t(lang, action), f"dev_toggle:{ident}")])
-        rows.append([_button(t(lang, "delete"), f"dev_del:{ident}")])
-    if can_manage_state:
-        rows.append([_button(t(lang, "back"), "menu:devices"), _button(t(lang, "close"), "close")])
-        return Screen(text, rows)
+        rows.append([_button(t(lang, action), f"dev_toggle:{ident}"), _button(t(lang, "delete"), f"dev_del:{ident}")])
     rows.append([_button(t(lang, "back"), "menu:devices"), _button(t(lang, "close"), "close")])
     return Screen(text, rows)
+
+
+def device_delete_confirm(lang: str, device: dict[str, Any]) -> Screen:
+    """Ask before deleting a device."""
+    ident = device["id"]
+    text = t(lang, "delete_device_q", name=escape(str(device.get("name", "")), quote=False))
+    return Screen(text, [[_button(t(lang, "confirm"), f"dev_delok:{ident}"), _button(t(lang, "cancel"), f"pinfo:{ident}")]])
 
 
 def users_screen(lang: str, users: list[dict[str, Any]], flt: str, page: int) -> Screen:
@@ -158,28 +195,39 @@ def users_screen(lang: str, users: list[dict[str, Any]], flt: str, page: int) ->
     rows = [[_button(t(lang, key), f"users:{key}:{0}") for key in ("all", "enabled", "disabled")]]
     for user in filtered[page * 8:page * 8 + 8]:
         name = str(user.get("username", ""))
-        label = ("(admin) " if user.get("role") == "admin" else "") + ("⛔ " if user.get("status") == "disabled" else "") + name
+        icon = "⛔" if user.get("status") == "disabled" else "👑" if user.get("role") == "admin" else "👤"
         if len(f"user:{name}".encode()) <= 64:
-            rows.append([_button(label, f"user:{name}")])
-    if page or page < pages - 1:
-        rows.append([_button("‹", f"users:{flt}:{page-1}"), _button("›", f"users:{flt}:{page+1}")])
-    rows.append([_button(t(lang, "close"), "close")])
+            rows.append([_button(f"{icon} {name}", f"user:{name}")])
+    pager = _pager(f"users:{flt}", page, pages)
+    if pager:
+        rows.append(pager)
+    rows.append([_button(t(lang, "back"), "menu"), _button(t(lang, "close"), "close")])
     return Screen(t(lang, "users_total", total=len(filtered)), rows)
 
 
 def user_card(lang: str, user: dict[str, Any]) -> Screen:
     name = str(user.get("username", ""))
     limit = user.get("config_limit", 3)
+    disabled = user.get("status") == "disabled"
     text = t(lang, "user_card", username=escape(name), role=escape(str(user.get("role", "user"))),
              used=user.get("device_count", 0), limit="∞" if limit == -1 else limit,
-             tg_id=user.get("tg_id") or "pending", status=t(lang, "status_off" if user.get("status") == "disabled" else "status_on"))
+             tg_id=user.get("tg_id") or "pending", status=t(lang, "status_off" if disabled else "status_on"))
     rows = []
     if len(f"udev:{name}".encode()) <= 64:
+        toggle = _button(t(lang, "userena" if disabled else "userdis"), f"{'userena' if disabled else 'userdis'}:{name}")
+        role = f"urole:{name}:user" if user.get("role") == "admin" else f"urole:{name}:admin"
         rows.append([_button(t(lang, "user_devices"), f"udev:{name}")])
-        for label, data in (("user_limit", f"ulimit:{name}"), ("userdis", f"userdis:{name}"), ("userena", f"userena:{name}"), ("urole", f"urole:{name}:user" if user.get("role") == "admin" else f"urole:{name}:admin"), ("udel", f"udel:{name}")):
-            rows.append([_button(t(lang, label), data)])
+        rows.append([_button(t(lang, "user_limit"), f"ulimit:{name}"), toggle])
+        rows.append([_button(t(lang, "urole"), role), _button(t(lang, "udel"), f"udel:{name}")])
     rows.append([_button(t(lang, "back"), "menu:users"), _button(t(lang, "close"), "close")])
     return Screen(text, rows)
+
+
+def user_delete_confirm(lang: str, name: str) -> Screen:
+    """Ask before deleting a user."""
+    text = t(lang, "delete_user_q", name=escape(name, quote=False))
+    return Screen(text, [[_button(t(lang, "confirm"), f"udelok:{name}"), _button(t(lang, "cancel"), f"user:{name}")]])
+
 
 
 def request_admin_screen(lang: str, request: dict[str, Any]) -> Screen:

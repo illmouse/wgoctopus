@@ -1,6 +1,8 @@
 """Thin python-telegram-bot integration."""
 
+import json
 import logging
+import re
 from io import BytesIO
 from typing import Any
 
@@ -75,6 +77,57 @@ async def _disabled(update: Update, language: str) -> None:
         await message.reply_text(t(language, "account_disabled"))
 
 
+def _is_not_modified(exc: Exception) -> bool:
+    return "message is not modified" in str(exc).lower()
+
+
+def _rich_message(screen: Any) -> dict[str, Any]:
+    headers, rows = screen.table
+    title = re.sub(r"<[^>]+>", "", screen.text.split("\n", 1)[0])
+    cells = [[{"text": header, "is_header": True} for header in headers]]
+    cells += [[{"text": value} for value in row] for row in rows]
+    blocks: list[dict[str, Any]] = [
+        {"type": "paragraph", "text": title},
+        {"type": "table", "is_bordered": True, "is_striped": True, "cells": cells},
+    ]
+    for row in screen.buttons:
+        blocks.append({"type": "buttons", "buttons": [{"text": b.label, "callback_data": b.data} for b in row]})
+    return {"blocks": blocks}
+
+
+async def _show(screen: Any, markup: InlineKeyboardMarkup, query: Any, message: Any, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send or edit a screen; tables go through rich messages with a plain-text fallback."""
+    if getattr(screen, "table", None):
+        try:
+            rich = json.dumps(_rich_message(screen))
+            if query:
+                await context.bot._post("editMessageText", data={"chat_id": query.message.chat_id, "message_id": query.message.message_id, "rich_message": rich})
+            elif message:
+                await context.bot._post("sendRichMessage", data={"chat_id": message.chat_id, "rich_message": rich})
+            return
+        except TelegramError as exc:
+            if _is_not_modified(exc):
+                return
+            logger.info("Rich message failed, falling back to text")
+    try:
+        if query:
+            await query.edit_message_text(screen.text, parse_mode="HTML", reply_markup=markup)
+        elif message:
+            await message.reply_text(screen.text, parse_mode="HTML", reply_markup=markup)
+    except BadRequest as exc:
+        if _is_not_modified(exc):
+            return
+        if not query:
+            raise
+        # the source may be a rich message without text: replace it
+        chat = query.message
+        await chat.reply_text(screen.text, parse_mode="HTML", reply_markup=markup)
+        try:
+            await chat.delete()
+        except TelegramError:
+            logger.info("Could not delete replaced message")
+
+
 async def render(result: Any, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     message = update.effective_message
@@ -84,14 +137,7 @@ async def render(result: Any, update: Update, context: ContextTypes.DEFAULT_TYPE
     elif isinstance(result, ShowScreen):
         screen = result.screen
         markup = InlineKeyboardMarkup([[InlineKeyboardButton(button.label, callback_data=button.data) for button in row] for row in screen.buttons])
-        try:
-            if query and result.edit:
-                await query.edit_message_text(screen.text, parse_mode="HTML", reply_markup=markup)
-            elif message:
-                await message.reply_text(screen.text, parse_mode="HTML", reply_markup=markup)
-        except BadRequest as exc:
-            if "message is not modified" not in str(exc).lower():
-                raise
+        await _show(screen, markup, query if result.edit else None, message, context)
     elif isinstance(result, SendDocument):
         user = update.effective_user
         if message and user and message.chat.type != "private":
@@ -226,7 +272,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if actor is None:
         return
     labels = {t(actor.lang, "devices"): "menu:devices", t(actor.lang, "add"): "create:self", t(actor.lang, "limit"): "reqlim"}
-    labels.update({"Requests": "menu:requests", "Заявки": "menu:requests", t(actor.lang, "users"): "menu:users"})
+    labels.update({t(actor.lang, "requests_menu", count=""): "menu:requests", "Requests": "menu:requests", "Заявки": "menu:requests", t(actor.lang, "users"): "menu:users"})
     if message.text in labels:
         context.user_data.pop("input", None)
         await render(await handle_callback(labels[message.text], actor, api, config), update, context)

@@ -21,7 +21,8 @@ async def test_requests_tabs_pages_and_render():
         api.requests[i + 1] = {"id": i + 1, "status": "pending", "type": "access", "username": "alice", "tg_id": 1}
     result = await handle_callback("reqs:pending:2", Actor("root", 2, "admin"), api)
     assert isinstance(result, ShowScreen)
-    assert "#21" in result.screen.text and "#25" in result.screen.text
+    labels = [b.label for row in result.screen.buttons for b in row]
+    assert any("#21" in label for label in labels) and any("#25" in label for label in labels)
     assert [k for k in EN] == [k for k in RU]
     assert "pending" in requests_screen("en", [api.requests[1]], "all", 0, 25, 25).text
     assert (await handle_callback("reqs:all:0", Actor("root", 2, "admin"), api)).screen.buttons[0][0].data == "reqs:all:0"
@@ -45,3 +46,21 @@ async def test_requests_non_admin_and_command():
     denied = await handle_callback("reqs:all:0", Actor("alice", 1, "user"), api)
     assert isinstance(denied, Toast) and denied.alert
     assert isinstance(await cmd_admin("requests", [], Actor("root", 2, "admin"), api, Config("")), ShowScreen)
+
+
+def test_requests_all_tab_has_table_and_pending_tab_does_not():
+    request = {"id": 1, "status": "approved", "type": "limit", "username": "alice", "requested_limit": 5, "created_at": "2026-01-02T00:00:00", "admin_username": "root"}
+    screen = requests_screen("en", [request], "all", 0, 1, 0)
+    headers, rows = screen.table
+    assert len(headers) == len(rows[0]) == 7
+    assert rows[0][0] == "#1" and "root" in rows[0]
+    assert requests_screen("en", [request], "pending", 0, 1, 0).table is None
+    assert requests_screen("en", [], "all", 0, 0, 0).table is None
+
+
+def test_pagination_has_only_needed_buttons():
+    from wgoctopus_bot.screens import _pager
+
+    assert _pager("x", 0, 1) == []
+    assert [b.data for b in _pager("x", 0, 3)] == ["noop", "x:1"]
+    assert [b.data for b in _pager("x", 2, 3)] == ["x:1", "noop"]

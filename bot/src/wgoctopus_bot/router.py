@@ -12,12 +12,14 @@ from .i18n import lang_from_code, t
 from .screens import (
     Screen,
     device_card,
+    device_delete_confirm,
     devices_screen,
     main_menu,
     request_admin_screen,
     request_done_text,
     requests_screen,
     user_card,
+    user_delete_confirm,
     users_screen,
 )
 
@@ -213,7 +215,7 @@ async def handle_callback(
         if data.startswith(("dev_toggle:", "dev_del:", "dev_delok:")):
             if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
             action, raw_id = data.split(":", 1); ident = int(raw_id)
-            if action == "dev_del": return ShowScreen(device_card(actor.lang, await api.device(ident), True), True)
+            if action == "dev_del": return ShowScreen(device_delete_confirm(actor.lang, await api.device(ident)), True)
             device = await api.device(ident)
             if action == "dev_delok": await api.delete_device(ident)
             else: await api.patch_device(ident, enabled=not device.get("enabled"))
@@ -222,7 +224,7 @@ async def handle_callback(
             if actor.role != "admin": return Toast(t(actor.lang, "forbidden"), alert=True)
             parts = data.split(":"); action, username = parts[0], parts[1]
             user = await api.get_user(username)
-            if action == "udel": return ShowScreen(user_card(actor.lang, user), True)
+            if action == "udel": return ShowScreen(user_delete_confirm(actor.lang, username), True)
             if action == "udelok": await api.delete_user(username)
             elif action == "userdis":
                 if user.get("role") == "admin": return Toast(t(actor.lang, "user_admin_protected"))

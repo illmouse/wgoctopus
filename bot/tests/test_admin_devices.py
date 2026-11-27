@@ -33,7 +33,7 @@ async def test_device_toggle_delete_confirmation_and_denial():
     await api.create_device("alice", 9, "device")
     card = await handle_callback("dev_del:1", ADMIN, api, CFG)
     assert isinstance(card, ShowScreen)
-    assert "dev_del:1" in callbacks(card.screen)
+    assert "dev_delok:1" in callbacks(card.screen)
     assert isinstance(await handle_callback("dev_toggle:1", ADMIN, api, CFG), ShowScreen)
     assert api.devices_data[0]["enabled"] is False
     assert isinstance(await handle_callback("dev_delok:1", ADMIN, api, CFG), ShowScreen)
